@@ -1,0 +1,22 @@
+# Doppler Configuration
+# This file documents the Doppler setup for the project
+# 
+# Setup Instructions:
+# 1. Install Doppler CLI: https://docs.doppler.com/docs/install-cli
+# 2. Authenticate: doppler login
+# 3. Create project: doppler setup --project ai-log-analytics --config dev
+# 4. Add secrets via Doppler dashboard or CLI:
+#    - DATABASE_URL
+#    - OPENAI_API_KEY
+#    - QDRANT_API_KEY
+#    - QDRANT_URL
+#    - KAFKA_BOOTSTRAP_SERVERS
+#    - LANGFUSE_SECRET_KEY
+#    - LANGFUSE_PUBLIC_KEY
+#    - LANGFUSE_HOST
+#
+# Usage in code:
+# - Python: Use doppler-python or doppler CLI
+# - Docker: Use doppler run -- docker-compose up
+# - Environment: doppler secrets download --no-file --format env
+
