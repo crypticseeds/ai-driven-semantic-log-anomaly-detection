@@ -1,9 +1,12 @@
 """Application configuration with Doppler integration."""
 
 from functools import lru_cache
-from typing import Optional
 
-import doppler_sdk
+try:
+    import doppler_sdk
+except ImportError:
+    doppler_sdk = None
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -31,27 +34,27 @@ class Settings(BaseSettings):
     )
 
     # OpenAI
-    openai_api_key: Optional[str] = Field(
+    openai_api_key: str | None = Field(
         default=None,
         description="OpenAI API key for embeddings",
     )
 
     # Qdrant
-    qdrant_url: Optional[str] = Field(
+    qdrant_url: str | None = Field(
         default=None,
         description="Qdrant Cloud URL",
     )
-    qdrant_api_key: Optional[str] = Field(
+    qdrant_api_key: str | None = Field(
         default=None,
         description="Qdrant Cloud API key",
     )
 
     # Langfuse
-    langfuse_secret_key: Optional[str] = Field(
+    langfuse_secret_key: str | None = Field(
         default=None,
         description="Langfuse secret key",
     )
-    langfuse_public_key: Optional[str] = Field(
+    langfuse_public_key: str | None = Field(
         default=None,
         description="Langfuse public key",
     )
@@ -85,8 +88,13 @@ class Settings(BaseSettings):
     )
 
     @classmethod
-    def load_from_doppler(cls, project: str = "ai-log-analytics", config: str = "dev") -> "Settings":
+    def load_from_doppler(
+        cls, project: str = "ai-log-analytics", config: str = "dev"
+    ) -> "Settings":
         """Load settings from Doppler."""
+        if doppler_sdk is None:
+            # Doppler SDK not available, use environment variables
+            return cls()
         try:
             client = doppler_sdk.Doppler(
                 api_key=doppler_sdk.get_secret("DOPPLER_TOKEN") or "",
@@ -101,7 +109,7 @@ class Settings(BaseSettings):
             return cls()
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
     # Try to load from Doppler first, fallback to environment
@@ -109,4 +117,3 @@ def get_settings() -> Settings:
         return Settings.load_from_doppler()
     except Exception:
         return Settings()
-

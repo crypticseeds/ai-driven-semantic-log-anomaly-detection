@@ -27,8 +27,3 @@ storage:
       max_workers: 100
       queue_depth: 10000
 
-overrides:
-  defaults:
-    ingestion_burst_size_bytes: 10485760
-    ingestion_rate_limit_bytes: 10485760
-

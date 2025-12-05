@@ -1,9 +1,12 @@
 """FastAPI application main module."""
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from prometheus_client import make_asgi_app
+from starlette.routing import Mount
 
 from app.config import get_settings
 from app.db.postgres import Base
@@ -14,24 +17,31 @@ from app.observability.otel import (
     instrument_sqlalchemy,
     setup_opentelemetry,
 )
+from app.services.ingestion_service import ingestion_service
 
 settings = get_settings()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     """Application lifespan events."""
     # Startup
     setup_opentelemetry()
     instrument_sqlalchemy(engine)
-    
+
     # Create database tables
     Base.metadata.create_all(bind=engine)
-    
+
+    # Start ingestion service
+    ingestion_task = asyncio.create_task(ingestion_service.start_consuming())
+
     yield
-    
+
     # Shutdown
-    pass
+    ingestion_service.stop()
+    ingestion_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await ingestion_task
 
 
 app = FastAPI(
@@ -43,6 +53,10 @@ app = FastAPI(
 
 # Instrument FastAPI for OpenTelemetry
 instrument_fastapi(app)
+
+# Mount Prometheus metrics endpoint
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
 
 
 @app.get("/health")
@@ -67,4 +81,3 @@ async def root():
             "version": settings.app_version,
         }
     )
-

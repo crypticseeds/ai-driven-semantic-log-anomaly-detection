@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL Database
   postgres:
@@ -36,17 +34,18 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
-      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}
     ports:
       - "9092:9092"
     volumes:
-      - kafka_data:/tmp/kraft-combined-logs
+      - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1 || exit 1"]
+      interval: 15s
       timeout: 10s
-      retries: 5
+      retries: 8
+      start_period: 90s
     networks:
       - ai-log-network
     depends_on:
@@ -57,13 +56,16 @@ services:
     image: fluent/fluent-bit:3.0.0
     container_name: ai-log-fluentbit
     volumes:
-      - ./ingestion/fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ../ingestion/fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ../ingestion/fluentbit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
       - /var/log:/var/log:ro
     command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.conf"]
     networks:
       - ai-log-network
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
 
   # Backend (FastAPI)
   backend:
@@ -85,26 +87,29 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-    command: doppler run -- uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    command: sh -c "if command -v doppler > /dev/null 2>&1; then doppler run -- python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload; else python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload; fi"
 
   # Dashboard (Next.js)
-  dashboard:
-    build:
-      context: ..
-      dockerfile: infra/docker/dashboard.Dockerfile
-    container_name: ai-log-dashboard
-    environment:
-      NEXT_PUBLIC_API_URL: http://backend:8000
-    ports:
-      - "3000:3000"
-    volumes:
-      - ../dashboard/nextjs-app:/app
-      - /app/node_modules
-      - /app/.next
-    networks:
-      - ai-log-network
-    depends_on:
-      - backend
+  # Commented out: Dashboard not yet initialized (missing package.json)
+  # Uncomment once Next.js app is set up
+  # dashboard:
+  #   build:
+  #     context: ..
+  #     dockerfile: infra/docker/dashboard.Dockerfile
+  #   container_name: ai-log-dashboard
+  #   environment:
+  #     NEXT_PUBLIC_API_URL: http://backend:8000
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - ../dashboard/nextjs-app:/app
+  #     - /app/node_modules
+  #     - /app/.next
+  #   networks:
+  #     - ai-log-network
+  #   depends_on:
+  #     - backend
 
   # Prometheus (Metrics)
   prometheus:
@@ -120,6 +125,7 @@ services:
       - "9090:9090"
     networks:
       - ai-log-network
+    restart: unless-stopped
 
   # Grafana (Dashboards)
   grafana:
@@ -137,6 +143,7 @@ services:
       - ai-log-network
     depends_on:
       - prometheus
+    restart: unless-stopped
 
   # Tempo (Tracing)
   tempo:
@@ -152,36 +159,42 @@ services:
       - "3200:3200"  # Tempo
     networks:
       - ai-log-network
+    restart: unless-stopped
 
   # Langfuse (LLM Observability)
-  langfuse:
-    image: langfuse/langfuse:latest
-    container_name: ai-log-langfuse
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-ailog}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ailog}
-      NEXTAUTH_SECRET: ${LANGFUSE_SECRET:-changeme}
-      NEXTAUTH_URL: http://localhost:3002
-      SALT: ${LANGFUSE_SALT:-changeme}
-    ports:
-      - "3002:3000"
-    networks:
-      - ai-log-network
-    depends_on:
-      postgres:
-        condition: service_healthy
+  # Note: This docker image is included for self-contained deployment/testing.
+  # For production, use Langfuse Cloud (credentials configured via Doppler).
+  # Comment out this service if using Langfuse Cloud.
+  # langfuse:
+  #   image: langfuse/langfuse:latest
+  #   container_name: ai-log-langfuse
+  #   environment:
+  #     DATABASE_URL: postgresql://${POSTGRES_USER:-ailog}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ailog}
+  #     NEXTAUTH_SECRET: ${LANGFUSE_SECRET:-changeme}
+  #     NEXTAUTH_URL: http://localhost:3002
+  #     SALT: ${LANGFUSE_SALT:-changeme}
+  #   ports:
+  #     - "3002:3000"
+  #   networks:
+  #     - ai-log-network
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
 
   # Ollama (Local LLM)
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ai-log-ollama
-    volumes:
-      - ollama_data:/root/.ollama
-    ports:
-      - "11434:11434"
-    networks:
-      - ai-log-network
-    # Note: Models need to be pulled after container starts
-    # docker exec ai-log-ollama ollama pull llama3.1:8b
+  # Commented out: Using OpenAI API instead (configured via Doppler)
+  # Uncomment if you want to use local LLM instead of OpenAI
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ai-log-ollama
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   ports:
+  #     - "11434:11434"
+  #   networks:
+  #     - ai-log-network
+  #   # Note: Models need to be pulled after container starts
+  #   # docker exec ai-log-ollama ollama pull llama3.1:8b
 
 volumes:
   postgres_data:
@@ -189,7 +202,7 @@ volumes:
   prometheus_data:
   grafana_data:
   tempo_data:
-  ollama_data:
+  # ollama_data:  # Uncomment if using Ollama service
 
 networks:
   ai-log-network:
