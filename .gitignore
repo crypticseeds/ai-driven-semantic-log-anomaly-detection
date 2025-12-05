@@ -198,6 +198,7 @@ cython_debug/
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
+.cursor/
 .cursorignore
 .cursorindexingignore
 
@@ -205,3 +206,62 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific
+# Docker volumes and data
+docker-data/
+*.log
+*.sql
+*.dump
+
+# Next.js / Dashboard
+dashboard/nextjs-app/.next/
+dashboard/nextjs-app/out/
+dashboard/nextjs-app/node_modules/
+dashboard/nextjs-app/.vercel/
+dashboard/nextjs-app/.turbo/
+dashboard/nextjs-app/.env*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# UV virtual environment (if using local venv)
+.venv/
+venv/
+
+# Environment files (keep .env.example)
+.env
+.env.local
+.env.*.local
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Alembic
+alembic/versions/*.pyc
+
+# Grafana
+infra/grafana/data/
+
+# Prometheus
+infra/prometheus/data/
+
+# Tempo
+infra/tempo/data/
