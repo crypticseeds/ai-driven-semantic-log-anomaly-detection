@@ -1,11 +1,10 @@
 """SQLAlchemy models for PostgreSQL."""
 
-from datetime import datetime
-from typing import Optional
-
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, JSON
-from sqlalchemy.dialects.postgresql import UUID
 import uuid
+from datetime import datetime
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Integer, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.session import Base
 
@@ -21,7 +20,7 @@ class LogEntry(Base):
     service = Column(String(100), nullable=False, index=True)
     message = Column(Text, nullable=False)
     raw_log = Column(Text, nullable=False)
-    metadata = Column(JSON, nullable=True)
+    log_metadata = Column(JSON, nullable=True)  # Renamed from 'metadata' (reserved in SQLAlchemy)
     pii_redacted = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -53,4 +52,3 @@ class ClusteringMetadata(Base):
     representative_logs = Column(JSON, nullable=True)  # Sample log IDs
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-

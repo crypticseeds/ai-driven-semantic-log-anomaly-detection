@@ -1,6 +1,6 @@
 """Prometheus metrics."""
 
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 # Request metrics
 http_requests_total = Counter(
@@ -38,4 +38,3 @@ vector_store_size = Gauge(
     "vector_store_size",
     "Number of vectors in Qdrant",
 )
-

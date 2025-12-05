@@ -1,5 +1,6 @@
 """OpenTelemetry instrumentation setup."""
 
+from langfuse import Langfuse
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -7,7 +8,6 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from langfuse import Langfuse
 
 from app.config import get_settings
 
@@ -33,9 +33,7 @@ def setup_opentelemetry():
     )
 
     provider = TracerProvider(resource=resource)
-    processor = BatchSpanProcessor(
-        OTLPSpanExporter(endpoint=settings.otel_exporter_otlp_endpoint)
-    )
+    processor = BatchSpanProcessor(OTLPSpanExporter(endpoint=settings.otel_exporter_otlp_endpoint))
     provider.add_span_processor(processor)
     trace.set_tracer_provider(provider)
 
@@ -50,4 +48,3 @@ def instrument_fastapi(app):
 def instrument_sqlalchemy(engine):
     """Instrument SQLAlchemy engine."""
     SQLAlchemyInstrumentor().instrument(engine=engine)
-
