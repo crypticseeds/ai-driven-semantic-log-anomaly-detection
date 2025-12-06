@@ -1,0 +1,114 @@
+name: Container Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "infra/docker/**"
+      - ".github/workflows/container-scan.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "infra/docker/**"
+      - ".github/workflows/container-scan.yml"
+  schedule:
+    # Run weekly on Monday at 00:00 UTC
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+jobs:
+  trivy-scan:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - name: backend
+            path: infra/docker/backend.Dockerfile
+            context: .
+          # Uncomment when dashboard is ready
+          # - name: dashboard
+          #   path: infra/docker/dashboard.Dockerfile
+          #   context: .
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if Dockerfile exists
+        id: check_dockerfile
+        run: |
+          if [ -f "${{ matrix.dockerfile.path }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.check_dockerfile.outputs.exists == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        if: steps.check_dockerfile.outputs.exists == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.dockerfile.context }}
+          file: ${{ matrix.dockerfile.path }}
+          push: false
+          tags: ${{ matrix.dockerfile.name }}:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy vulnerability scanner
+        if: steps.check_dockerfile.outputs.exists == 'true'
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: ${{ matrix.dockerfile.name }}:local
+          format: "sarif"
+          output: "trivy-results-${{ matrix.dockerfile.name }}.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          scanners: "vuln,config,secret"
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        if: steps.check_dockerfile.outputs.exists == 'true' && hashFiles(format('trivy-results-{0}.sarif', matrix.dockerfile.name)) != ''
+        with:
+          sarif_file: "trivy-results-${{ matrix.dockerfile.name }}.sarif"
+          category: "trivy-${{ matrix.dockerfile.name }}"
+
+  trivy-filesystem-scan:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-fs-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          scanners: "vuln,config,secret"
+
+      - name: Upload Trivy filesystem results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        if: hashFiles('trivy-fs-results.sarif') != ''
+        with:
+          sarif_file: "trivy-fs-results.sarif"
+          category: "trivy-filesystem"

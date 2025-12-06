@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
-from starlette.routing import Mount
 
 from app.config import get_settings
 from app.db.postgres import Base

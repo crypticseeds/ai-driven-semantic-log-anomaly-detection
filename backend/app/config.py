@@ -1,18 +1,36 @@
-"""Application configuration with Doppler integration."""
+"""Application configuration with Doppler integration.
+
+This module loads configuration from environment variables, which are automatically
+injected by the Doppler CLI when running with `doppler run --`.
+
+For local development:
+    doppler run -- uvicorn app.main:app
+
+For Docker Compose:
+    doppler run -- docker-compose up
+
+For CI/CD with token:
+    doppler run --token=$DOPPLER_TOKEN -- docker-compose up
+"""
 
 from functools import lru_cache
-
-try:
-    import doppler_sdk
-except ImportError:
-    doppler_sdk = None
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables and Doppler."""
+    """Application settings loaded from environment variables.
+
+    When run with `doppler run --`, secrets are automatically injected as
+    environment variables by the Doppler CLI. The application reads these
+    environment variables directly.
+
+    Falls back to:
+    - Direct environment variables
+    - .env file (if present)
+    - Default values
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -87,33 +105,17 @@ class Settings(BaseSettings):
         description="Debug mode",
     )
 
-    @classmethod
-    def load_from_doppler(
-        cls, project: str = "ai-log-analytics", config: str = "dev"
-    ) -> "Settings":
-        """Load settings from Doppler."""
-        if doppler_sdk is None:
-            # Doppler SDK not available, use environment variables
-            return cls()
-        try:
-            client = doppler_sdk.Doppler(
-                api_key=doppler_sdk.get_secret("DOPPLER_TOKEN") or "",
-            )
-            secrets = client.secrets.get(project=project, config=config)
-            # Convert Doppler secrets to environment variables
-            env_vars = {k.upper().replace("-", "_"): v for k, v in secrets.items()}
-            return cls(**env_vars)
-        except Exception as e:
-            # Fallback to environment variables if Doppler fails
-            print(f"Warning: Failed to load from Doppler: {e}. Using environment variables.")
-            return cls()
-
 
 @lru_cache
 def get_settings() -> Settings:
-    """Get cached settings instance."""
-    # Try to load from Doppler first, fallback to environment
-    try:
-        return Settings.load_from_doppler()
-    except Exception:
-        return Settings()
+    """Get cached settings instance.
+
+    Loads settings from environment variables, which are automatically
+    injected by Doppler CLI when running with `doppler run --`.
+
+    Falls back to:
+    - Direct environment variables
+    - .env file (if present)
+    - Default values
+    """
+    return Settings()

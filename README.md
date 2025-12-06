@@ -7,7 +7,107 @@ AI-driven semantic log anomaly detection project
 - Docker and Docker Compose
 - Doppler CLI (for secrets management)
 
+## 🔐 Doppler Secrets Management
+
+This project uses [Doppler](https://www.doppler.com/) for secure secrets management. All sensitive configuration values (API keys, database URLs, etc.) are stored in Doppler and injected at runtime.
+
+### Installing Doppler CLI
+
+**macOS:**
+```bash
+brew install dopplerhq/cli/doppler
+```
+
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | sudo gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | sudo tee /etc/apt/sources.list.d/doppler-cli.list
+sudo apt-get update && sudo apt-get install doppler
+```
+
+**Other platforms:** See [Doppler CLI installation guide](https://docs.doppler.com/docs/install-cli)
+
+### Setting Up Doppler
+
+1. **Authenticate with Doppler:**
+   ```bash
+   doppler login
+   ```
+
+2. **Create a Doppler project:**
+   ```bash
+   doppler projects create ai-log-analytics
+   ```
+
+3. **Set up the project configuration:**
+   ```bash
+   doppler setup --project ai-log-analytics --config dev
+   ```
+
+4. **Add secrets to Doppler:**
+
+   You can add secrets via the Doppler dashboard or CLI:
+
+   ```bash
+   # Add secrets via CLI
+   doppler secrets set DATABASE_URL="postgresql://ailog:changeme@localhost:5432/ailog"
+   doppler secrets set KAFKA_BOOTSTRAP_SERVERS="localhost:9092"
+   doppler secrets set OPENAI_API_KEY="your-openai-api-key"
+   doppler secrets set QDRANT_URL="your-qdrant-url"
+   doppler secrets set QDRANT_API_KEY="your-qdrant-api-key"
+   doppler secrets set LANGFUSE_SECRET_KEY="your-langfuse-secret-key"
+   doppler secrets set LANGFUSE_PUBLIC_KEY="your-langfuse-public-key"
+   doppler secrets set LANGFUSE_HOST="http://langfuse:3000"
+   ```
+
+   **Required secrets:**
+   - `DATABASE_URL` - PostgreSQL connection string
+   - `KAFKA_BOOTSTRAP_SERVERS` - Kafka bootstrap servers
+   - `OPENAI_API_KEY` - OpenAI API key for embeddings (optional)
+   - `QDRANT_URL` - Qdrant Cloud URL (optional)
+   - `QDRANT_API_KEY` - Qdrant Cloud API key (optional)
+   - `LANGFUSE_SECRET_KEY` - Langfuse secret key (optional)
+   - `LANGFUSE_PUBLIC_KEY` - Langfuse public key (optional)
+   - `LANGFUSE_HOST` - Langfuse host URL (optional)
+
+### Using Doppler with the Application
+
+Run the application with Doppler CLI to automatically inject secrets as environment variables:
+
+**For Local Development:**
+```bash
+# Run FastAPI app with Doppler
+doppler run -- uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Or with Docker Compose
+doppler run -- docker-compose up
+```
+
+**For CI/CD (with DOPPLER_TOKEN):**
+```bash
+# Set DOPPLER_TOKEN environment variable, then:
+doppler run --token=$DOPPLER_TOKEN -- docker-compose up
+```
+
+The application automatically loads secrets from environment variables injected by the Doppler CLI. No SDK or special code is needed - the Doppler CLI injects secrets as environment variables, which your application reads normally.
+
+### Configuration Priority
+
+The application loads configuration in the following order:
+1. **Environment variables** (from Doppler CLI injection or direct env vars)
+2. **`.env` file** (if present)
+3. **Default values** (for development only)
+
 ### Running the Stack
+
+**With Doppler (Recommended):**
+```bash
+cd infra
+doppler run -- docker-compose up -d
+```
+
+**Without Doppler (uses defaults/.env):**
 ```bash
 cd infra
 docker-compose up -d
