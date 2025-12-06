@@ -241,5 +241,47 @@ class KafkaService:
             self.producer.close()
 
 
-# Global instance
-kafka_service = KafkaService()
+# Lazy initialization pattern
+_kafka_service_instance: KafkaService | None = None
+
+
+def get_kafka_service() -> KafkaService:
+    """
+    Get or create the global Kafka service instance (lazy initialization).
+
+    This prevents connection attempts during module import, improving:
+    - Testability (no need for module-level patches)
+    - Startup resilience (connections happen when needed)
+    - Error handling (can be initialized at application startup)
+
+    Returns:
+        KafkaService: The global Kafka service instance
+    """
+    global _kafka_service_instance
+    if _kafka_service_instance is None:
+        _kafka_service_instance = KafkaService()
+    return _kafka_service_instance
+
+
+class _KafkaServiceProxy:
+    """
+    Proxy to lazy-initialized Kafka service.
+
+    This maintains backward compatibility with existing code that uses
+    `kafka_service.method()` directly, while enabling lazy initialization.
+    """
+
+    def __getattr__(self, name: str):
+        """Delegate attribute access to the actual KafkaService instance."""
+        return getattr(get_kafka_service(), name)
+
+    def __repr__(self) -> str:
+        """Return representation of the proxy."""
+        if _kafka_service_instance is None:
+            return "<KafkaServiceProxy (not initialized)>"
+        return f"<KafkaServiceProxy -> {repr(_kafka_service_instance)}>"
+
+
+# Global instance with lazy initialization
+# This maintains backward compatibility while preventing eager connection attempts
+kafka_service = _KafkaServiceProxy()

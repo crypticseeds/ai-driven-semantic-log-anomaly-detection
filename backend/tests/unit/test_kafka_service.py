@@ -13,7 +13,25 @@ backend_dir = Path(__file__).parent.parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from app.services.kafka_service import KafkaService, json_serializer  # noqa: E402
+import app.services.kafka_service as kafka_service_module  # noqa: E402
+from app.services.kafka_service import (  # noqa: E402
+    KafkaService,
+    get_kafka_service,
+    json_serializer,
+    kafka_service,
+)
+
+
+@pytest.fixture(autouse=True)
+def reset_kafka_service_instance():
+    """Reset the global Kafka service instance before each test."""
+    # Reset the global instance to ensure clean test state
+    kafka_service_module._kafka_service_instance = None
+    yield
+    # Cleanup after test
+    if kafka_service_module._kafka_service_instance:
+        kafka_service_module._kafka_service_instance.close()
+    kafka_service_module._kafka_service_instance = None
 
 
 class TestJsonSerializer:
@@ -245,3 +263,59 @@ class TestKafkaService:
 
         mock_consumer.close.assert_called_once()
         mock_producer.close.assert_called_once()
+
+    @patch("app.services.kafka_service.KafkaConsumer")
+    @patch("app.services.kafka_service.KafkaProducer")
+    def test_lazy_initialization(self, mock_producer_class, mock_consumer_class):
+        """Test that lazy initialization works correctly."""
+        # Reset the global instance
+        kafka_service_module._kafka_service_instance = None
+
+        # Verify instance is None before first access
+        assert kafka_service_module._kafka_service_instance is None
+
+        # Configure mocks
+        mock_consumer = Mock()
+        mock_consumer.topics.return_value = set()
+        mock_consumer_class.return_value = mock_consumer
+
+        mock_producer = Mock()
+        mock_producer.bootstrap_connected.return_value = True
+        mock_producer_class.return_value = mock_producer
+
+        # First call to get_kafka_service should create instance
+        service1 = get_kafka_service()
+        assert kafka_service_module._kafka_service_instance is not None
+        assert service1 is kafka_service_module._kafka_service_instance
+
+        # Second call should return the same instance
+        service2 = get_kafka_service()
+        assert service1 is service2
+
+        # Verify KafkaService was only initialized once
+        assert mock_consumer_class.call_count == 1
+        assert mock_producer_class.call_count == 1
+
+    @patch("app.services.kafka_service.KafkaConsumer")
+    @patch("app.services.kafka_service.KafkaProducer")
+    def test_kafka_service_proxy(self, mock_producer_class, mock_consumer_class):
+        """Test that the kafka_service proxy works correctly."""
+        # Reset the global instance
+        kafka_service_module._kafka_service_instance = None
+
+        # Configure mocks
+        mock_consumer = Mock()
+        mock_consumer.topics.return_value = set()
+        mock_consumer_class.return_value = mock_consumer
+
+        mock_producer = Mock()
+        mock_producer.bootstrap_connected.return_value = True
+        mock_producer_class.return_value = mock_producer
+
+        # Accessing a method should trigger lazy initialization
+        assert kafka_service_module._kafka_service_instance is None
+        result = kafka_service.is_consumer_healthy()
+        assert kafka_service_module._kafka_service_instance is not None
+
+        # Verify the method was called on the actual instance
+        assert isinstance(result, bool)
