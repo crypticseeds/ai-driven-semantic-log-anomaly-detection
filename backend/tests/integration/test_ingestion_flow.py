@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.postgres import LogEntry
@@ -17,8 +18,16 @@ from app.services.storage_service import storage_service
 
 @pytest.fixture
 def db_session():
-    """Create a database session for testing."""
-    db = next(get_db())
+    """Create a database session for testing.
+
+    Skips tests if database is not available (e.g., in CI without PostgreSQL).
+    """
+    try:
+        db = next(get_db())
+        # Test the connection is actually working
+        db.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Database not available: {e}")
     try:
         yield db
     finally:

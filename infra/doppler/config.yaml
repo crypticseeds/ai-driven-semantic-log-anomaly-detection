@@ -1,6 +1,9 @@
 # Doppler Configuration
 # This file documents the Doppler setup for the project
-# 
+#
+# Project: ai-log-analytics
+# Default Config: dev
+#
 # Setup Instructions:
 # 1. Install Doppler CLI: https://docs.doppler.com/docs/install-cli
 # 2. Authenticate: doppler login
@@ -15,8 +18,15 @@
 #    - LANGFUSE_PUBLIC_KEY
 #    - LANGFUSE_HOST
 #
-# Usage in code:
-# - Python: Use doppler-python or doppler CLI
-# - Docker: Use doppler run -- docker-compose up
+# Usage:
+# - Python: doppler run -- uvicorn app.main:app
+# - Docker: doppler run -- docker-compose up
 # - Environment: doppler secrets download --no-file --format env
+# - API: Set DOPPLER_TOKEN environment variable
+#
+# Configuration:
+# The application automatically detects and uses Doppler secrets when:
+# 1. Running with `doppler run --` (CLI injection)
+# 2. DOPPLER_TOKEN environment variable is set (API mode)
+# 3. Falls back to environment variables or .env file if Doppler is not available
 

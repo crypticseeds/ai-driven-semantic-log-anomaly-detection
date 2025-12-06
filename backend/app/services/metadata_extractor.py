@@ -47,7 +47,9 @@ class MetadataExtractor:
         # Default to INFO
         return "INFO"
 
-    def extract_service(self, message: str, metadata: dict, log_type: str | None = None, service: str | None = None) -> str:
+    def extract_service(
+        self, message: str, metadata: dict, log_type: str | None = None, service: str | None = None
+    ) -> str:
         """Extract service name from message, metadata, or log type."""
         # Check raw_log.service first (highest priority)
         if service:
@@ -108,7 +110,9 @@ class MetadataExtractor:
         """Extract all metadata from raw log entry."""
         timestamp = self.extract_timestamp(raw_log)
         level = self.extract_level(raw_log.message, raw_log.metadata, raw_log.level)
-        service = self.extract_service(raw_log.message, raw_log.metadata, raw_log.log_type, raw_log.service)
+        service = self.extract_service(
+            raw_log.message, raw_log.metadata, raw_log.log_type, raw_log.service
+        )
 
         # Merge with existing metadata
         metadata = raw_log.metadata.copy()
