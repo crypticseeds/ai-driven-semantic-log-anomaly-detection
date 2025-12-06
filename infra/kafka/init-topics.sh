@@ -58,4 +58,3 @@ $KAFKA_BIN/kafka-topics.sh --bootstrap-server $BOOTSTRAP_SERVER --list
 
 echo ""
 echo "Topic initialization complete!"
-

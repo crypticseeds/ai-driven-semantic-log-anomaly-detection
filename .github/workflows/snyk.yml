@@ -89,4 +89,3 @@ jobs:
         with:
           image: ${{ matrix.dockerfile.name }}:local
           args: --severity-threshold=high
-

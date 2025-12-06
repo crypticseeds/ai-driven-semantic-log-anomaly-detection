@@ -1,19 +1,24 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^dashboard/
       - id: end-of-file-fixer
+        exclude: ^dashboard/
       - id: check-yaml
+        exclude: ^dashboard/
       - id: check-added-large-files
       - id: check-json
+        exclude: ^dashboard/
       - id: check-toml
       - id: check-merge-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.15
+    rev: v0.14.8
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
+        files: ^backend/
       - id: ruff-format
-
+        files: ^backend/

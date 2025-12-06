@@ -25,6 +25,7 @@ dependencies = [
     # spaCy model - installed as direct URL to avoid runtime download (which requires pip)
     "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
     "ruff>=0.14.8",
+    "sentry-sdk[fastapi]>=2.47.0",
 ]
 
 [dependency-groups]
@@ -34,6 +35,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "httpx>=0.25.0",
     "ruff>=0.1.15",
+    "pre-commit>=3.0.0",
 ]
 
 [tool.uv.workspace]

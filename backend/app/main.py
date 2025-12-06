@@ -1,8 +1,10 @@
 """FastAPI application main module."""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager, suppress
 
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
@@ -21,6 +23,24 @@ from app.services.ingestion_service import ingestion_service
 from app.services.kafka_service import kafka_service
 
 settings = get_settings()
+
+# Initialize Sentry SDK before FastAPI app
+if settings.sentry_dsn:
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        send_default_pii=True,
+        enable_logs=True,
+        traces_sample_rate=1.0,
+        profile_session_sample_rate=1.0,
+        profile_lifecycle="trace",
+    )
+    # Configure Python logging to forward to Sentry
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    logger.info("Sentry SDK initialized successfully")
+else:
+    logger = logging.getLogger(__name__)
+    logger.warning("Sentry DSN not configured, skipping Sentry initialization")
 
 
 @asynccontextmanager
@@ -107,3 +127,13 @@ async def root():
             "version": settings.app_version,
         }
     )
+
+
+@app.get("/sentry-debug")
+async def trigger_error():
+    """Sentry debug endpoint to verify setup.
+
+    This endpoint intentionally triggers a division by zero error
+    to test Sentry error monitoring integration.
+    """
+    division_by_zero = 1 / 0  # noqa: F841

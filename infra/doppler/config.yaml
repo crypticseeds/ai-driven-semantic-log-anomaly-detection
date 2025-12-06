@@ -29,4 +29,3 @@
 # 1. Running with `doppler run --` (CLI injection)
 # 2. DOPPLER_TOKEN environment variable is set (API mode)
 # 3. Falls back to environment variables or .env file if Doppler is not available
-
