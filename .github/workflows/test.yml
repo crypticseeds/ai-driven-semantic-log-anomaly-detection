@@ -39,6 +39,12 @@ jobs:
           echo "=== Running Configuration Tests ==="
           uv run python -m pytest backend/tests/test_config.py -v --tb=short --durations=10
 
+      - name: Run PII Service Unit Tests (test_pii_service.py)
+        timeout-minutes: 3
+        run: |
+          echo "=== Running PII Service Unit Tests ==="
+          uv run python -m pytest backend/tests/unit/test_pii_service.py -v --tb=short --durations=10
+
       # TODO: Fix Kafka Service Unit Tests - see Linear issue
       # - name: Run Unit Tests (test_kafka_service.py)
       #   timeout-minutes: 3
