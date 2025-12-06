@@ -88,7 +88,9 @@ services:
       kafka:
         condition: service_healthy
     restart: unless-stopped
-    command: sh -c "if command -v doppler > /dev/null 2>&1; then doppler run -- python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload; else python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload; fi"
+    # Secrets are injected by Doppler CLI when running: doppler run -- docker-compose up
+    # For CI/CD: doppler run --token=$DOPPLER_TOKEN -- docker-compose up
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # Dashboard (Next.js)
   # Commented out: Dashboard not yet initialized (missing package.json)
