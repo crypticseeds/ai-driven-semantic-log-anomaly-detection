@@ -1,5 +1,4 @@
-"""Unit tests for Kafka service."""
-
+import importlib
 import json
 import sys
 from datetime import datetime
@@ -13,10 +12,10 @@ backend_dir = Path(__file__).parent.parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-import app.services.kafka_service as kafka_service_module  # noqa: E402
+kafka_service_module = importlib.import_module("app.services.kafka_service")
+
 from app.services.kafka_service import (  # noqa: E402
     KafkaService,
-    get_kafka_service,
     json_serializer,
     kafka_service,
 )
@@ -63,6 +62,12 @@ class TestJsonSerializer:
 
 class TestKafkaService:
     """Test Kafka service."""
+
+    @pytest.fixture(autouse=True)
+    def mock_sleep(self):
+        """Mock time.sleep to avoid waiting in tests."""
+        with patch("app.services.kafka_service.time.sleep"):
+            yield
 
     @patch("app.services.kafka_service.KafkaConsumer")
     @patch("app.services.kafka_service.KafkaProducer")
@@ -284,17 +289,17 @@ class TestKafkaService:
         mock_producer_class.return_value = mock_producer
 
         # First call to get_kafka_service should create instance
-        service1 = get_kafka_service()
+        service1 = kafka_service_module.get_kafka_service()
         assert kafka_service_module._kafka_service_instance is not None
         assert service1 is kafka_service_module._kafka_service_instance
 
         # Second call should return the same instance
-        service2 = get_kafka_service()
+        service2 = kafka_service_module.get_kafka_service()
         assert service1 is service2
 
         # Verify KafkaService was only initialized once
-        assert mock_consumer_class.call_count == 1
-        assert mock_producer_class.call_count == 1
+        mock_consumer_class.assert_called_once()
+        mock_producer_class.assert_called_once()
 
     @patch("app.services.kafka_service.KafkaConsumer")
     @patch("app.services.kafka_service.KafkaProducer")
