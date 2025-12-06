@@ -17,6 +17,7 @@ from app.observability.otel import (
     setup_opentelemetry,
 )
 from app.services.ingestion_service import ingestion_service
+from app.services.kafka_service import kafka_service
 
 settings = get_settings()
 
@@ -68,6 +69,28 @@ async def healthcheck():
             "service": settings.app_name,
             "version": settings.app_version,
         }
+    )
+
+
+@app.get("/health/kafka")
+async def kafka_healthcheck():
+    """Kafka health check endpoint."""
+    consumer_healthy = kafka_service.is_consumer_healthy()
+    producer_healthy = kafka_service.is_producer_healthy()
+    kafka_healthy = consumer_healthy and producer_healthy
+
+    status_code = 200 if kafka_healthy else 503
+    http_requests_total.labels(method="GET", endpoint="/health/kafka", status=status_code).inc()
+
+    return JSONResponse(
+        content={
+            "status": "healthy" if kafka_healthy else "unhealthy",
+            "kafka": {
+                "consumer": "healthy" if consumer_healthy else "unhealthy",
+                "producer": "healthy" if producer_healthy else "unhealthy",
+            },
+        },
+        status_code=status_code,
     )
 
 

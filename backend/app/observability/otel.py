@@ -1,6 +1,7 @@
 """OpenTelemetry instrumentation setup."""
 
-from langfuse import Langfuse
+import logging
+
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -11,16 +12,23 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
+
 settings = get_settings()
 
-# Initialize Langfuse
+# Initialize Langfuse (with error handling for compatibility issues)
 langfuse_client = None
-if settings.langfuse_secret_key and settings.langfuse_public_key:
-    langfuse_client = Langfuse(
-        secret_key=settings.langfuse_secret_key,
-        public_key=settings.langfuse_public_key,
-        host=settings.langfuse_host,
-    )
+try:
+    from langfuse import Langfuse
+
+    if settings.langfuse_secret_key and settings.langfuse_public_key:
+        langfuse_client = Langfuse(
+            secret_key=settings.langfuse_secret_key,
+            public_key=settings.langfuse_public_key,
+            host=settings.langfuse_host,
+        )
+except Exception as e:
+    logger.warning(f"Failed to initialize Langfuse: {e}. Continuing without Langfuse support.")
 
 
 def setup_opentelemetry():

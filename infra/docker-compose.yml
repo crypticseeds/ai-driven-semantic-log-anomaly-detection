@@ -50,6 +50,23 @@ services:
       - ai-log-network
     depends_on:
       - postgres
+    restart: unless-stopped
+
+  # Kafka Topics Initialization
+  kafka-init:
+    image: apache/kafka:3.7.0
+    container_name: ai-log-kafka-init
+    environment:
+      KAFKA_BOOTSTRAP_SERVER: kafka:9092
+    volumes:
+      - ./kafka/init-topics.sh:/init-topics.sh:ro
+    command: ["/bin/bash", "/init-topics.sh"]
+    networks:
+      - ai-log-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
 
   # Fluent Bit (Log Forwarder)
   fluentbit:
@@ -65,6 +82,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # Backend (FastAPI)
@@ -89,6 +108,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     # Secrets are injected by Doppler CLI when running: doppler run -- docker-compose up
     # For CI/CD: doppler run --token=$DOPPLER_TOKEN -- docker-compose up

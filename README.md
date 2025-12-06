@@ -141,19 +141,50 @@ Once the services are running, you can access them at the following endpoints:
 
 #### Kafka (Message Broker)
 - **Bootstrap Server**: `localhost:9092`
-- **Main Topic**: `logs-raw`
+- **Mode**: KRaft (no Zookeeper required)
+- **Topics**: `logs-raw`, `logs-processed`
+
+**Kafka KRaft Setup:**
+
+This project uses Apache Kafka in KRaft (Kafka Raft) mode, which eliminates the need for Zookeeper. KRaft mode provides:
+- Simplified deployment (no Zookeeper dependency)
+- Faster startup times
+- Better scalability
+- Self-managed metadata
+
+**Topics are automatically created** when the stack starts via the `kafka-init` service. The initialization script creates:
+- `logs-raw`: Raw log entries from Fluent Bit (3 partitions, 1 week retention)
+- `logs-processed`: Processed log entries after PII redaction and normalization (3 partitions, 1 week retention)
 
 **Kafka CLI Commands:**
 ```bash
 # List all topics
 docker exec -it ai-log-kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
 
+# Describe a topic
+docker exec -it ai-log-kafka kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic logs-raw
+
 # Consume messages from logs-raw topic
 docker exec -it ai-log-kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic logs-raw --from-beginning
+
+# Consume messages from logs-processed topic
+docker exec -it ai-log-kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic logs-processed --from-beginning
 
 # Produce a test message
 docker exec -it ai-log-kafka kafka-console-producer.sh --bootstrap-server localhost:9092 --topic logs-raw
 ```
+
+**Kafka Health Check:**
+```bash
+# Check Kafka health via API
+curl http://localhost:8000/health/kafka
+```
+
+**Kafka Configuration:**
+- **Replication Factor**: 1 (single node for development)
+- **Partitions**: 3 per topic (for parallel processing)
+- **Retention**: 7 days or 1GB per topic
+- **Consumer Group**: `log-processor-group`
 
 #### PostgreSQL (Database)
 - **Host**: `localhost`
