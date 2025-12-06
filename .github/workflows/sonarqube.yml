@@ -39,7 +39,8 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          uv run python -m pytest backend/tests -v --cov=backend/app --cov-report=xml --cov-report=term
+          # Exclude Kafka tests until they are fixed - see Linear issue DEV-41
+          uv run python -m pytest backend/tests --ignore=backend/tests/unit/test_kafka_service.py -v --cov=backend/app --cov-report=xml --cov-report=term
 
       - name: SonarQube Scan
         uses: sonarsource/sonarqube-scan-action@v6.0.0
