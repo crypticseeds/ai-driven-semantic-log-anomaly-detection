@@ -1,7 +1,5 @@
 """Presidio PII detection and redaction service."""
 
-from presidio_analyzer import AnalyzerEngine
-from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
 from app.config import get_settings
@@ -12,10 +10,29 @@ settings = get_settings()
 class PIIService:
     """Service for PII detection and redaction using Presidio."""
 
+    _analyzer = None
+    _anonymizer = None
+
     def __init__(self):
-        """Initialize Presidio analyzer and anonymizer."""
-        self.analyzer = AnalyzerEngine()
-        self.anonymizer = AnonymizerEngine()
+        """Initialize Presidio analyzer and anonymizer lazily."""
+        # Lazy initialization - engines are created on first use
+        pass
+
+    @property
+    def analyzer(self):
+        """Lazily initialize and return the AnalyzerEngine."""
+        if PIIService._analyzer is None:
+            from presidio_analyzer import AnalyzerEngine
+            PIIService._analyzer = AnalyzerEngine()
+        return PIIService._analyzer
+
+    @property
+    def anonymizer(self):
+        """Lazily initialize and return the AnonymizerEngine."""
+        if PIIService._anonymizer is None:
+            from presidio_anonymizer import AnonymizerEngine
+            PIIService._anonymizer = AnonymizerEngine()
+        return PIIService._anonymizer
 
     def detect_pii(self, text: str) -> list[dict]:
         """Detect PII entities in text."""
