@@ -19,7 +19,7 @@ from app.services.storage_service import storage_service
 @pytest.fixture
 def db_session():
     """Create a database session for testing.
-    
+
     Skips tests if database is not available (e.g., in CI without PostgreSQL).
     """
     try:

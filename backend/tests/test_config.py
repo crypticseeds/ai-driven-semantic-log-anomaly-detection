@@ -31,7 +31,7 @@ def test_get_settings_loads_from_environment():
     """Test get_settings loads from environment variables."""
     # Clear the lru_cache to ensure fresh settings are loaded
     get_settings.cache_clear()
-    
+
     os.environ["DATABASE_URL"] = "postgresql://env:test@localhost:5432/db"
 
     settings = get_settings()
