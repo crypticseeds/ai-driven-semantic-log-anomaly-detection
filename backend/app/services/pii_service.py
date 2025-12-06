@@ -1,14 +1,32 @@
 """Presidio PII detection and redaction service."""
 
+import logging
+
 from presidio_anonymizer.entities import OperatorConfig
 
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 class PIIService:
-    """Service for PII detection and redaction using Presidio."""
+    """Service for PII detection and redaction using Presidio.
+
+    Configured to detect and redact common PII types:
+    - Email addresses
+    - Phone numbers
+    - Credit card numbers
+    - Social Security Numbers (SSN)
+    - IP addresses
+    - US/UK passport numbers
+    - US driver's license numbers
+    - Date of birth
+    - Person names
+    - URLs (may contain sensitive info)
+    - IBAN codes
+    - Crypto addresses
+    """
 
     _analyzer = None
     _anonymizer = None
@@ -36,8 +54,38 @@ class PIIService:
             PIIService._anonymizer = AnonymizerEngine()
         return PIIService._anonymizer
 
+    def _get_operator_config(self) -> dict[str, OperatorConfig]:
+        """Get operator configuration for PII redaction.
+
+        Returns:
+            Dictionary mapping entity types to their redaction operators.
+        """
+        return {
+            "DEFAULT": OperatorConfig("replace", {"new_value": "[REDACTED]"}),
+            "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "[EMAIL]"}),
+            "PHONE_NUMBER": OperatorConfig("replace", {"new_value": "[PHONE]"}),
+            "CREDIT_CARD": OperatorConfig("replace", {"new_value": "[CREDIT_CARD]"}),
+            "SSN": OperatorConfig("replace", {"new_value": "[SSN]"}),
+            "IP_ADDRESS": OperatorConfig("replace", {"new_value": "[IP]"}),
+            "US_PASSPORT": OperatorConfig("replace", {"new_value": "[PASSPORT]"}),
+            "UK_PASSPORT": OperatorConfig("replace", {"new_value": "[PASSPORT]"}),
+            "US_DRIVER_LICENSE": OperatorConfig("replace", {"new_value": "[DRIVER_LICENSE]"}),
+            "DATE_TIME": OperatorConfig("replace", {"new_value": "[DATE]"}),
+            "PERSON": OperatorConfig("replace", {"new_value": "[PERSON]"}),
+            "URL": OperatorConfig("replace", {"new_value": "[URL]"}),
+            "IBAN_CODE": OperatorConfig("replace", {"new_value": "[IBAN]"}),
+            "CRYPTO": OperatorConfig("replace", {"new_value": "[CRYPTO]"}),
+        }
+
     def detect_pii(self, text: str) -> list[dict]:
-        """Detect PII entities in text."""
+        """Detect PII entities in text.
+
+        Args:
+            text: Text to analyze for PII
+
+        Returns:
+            List of detected PII entities with their types, positions, and confidence scores
+        """
         try:
             results = self.analyzer.analyze(text=text, language="en")
             return [
@@ -51,7 +99,7 @@ class PIIService:
             ]
         except Exception as e:
             # Log error but don't fail the pipeline
-            print(f"PII detection error: {e}")
+            logger.error(f"PII detection error: {e}", exc_info=True)
             return []
 
     def redact_pii(self, text: str, _entities: list[dict] | None = None) -> tuple[str, dict]:
@@ -60,26 +108,24 @@ class PIIService:
         Args:
             text: Text to redact PII from
             _entities: Unused parameter (kept for API compatibility)
+
+        Returns:
+            Tuple of (redacted_text, entity_summary) where:
+            - redacted_text: Text with PII replaced by placeholders
+            - entity_summary: Dictionary mapping entity types to counts
         """
         # Always re-analyze to get proper RecognizerResult objects for anonymizer
         try:
             analyzer_results = self.analyzer.analyze(text=text, language="en")
         except Exception as e:
-            print(f"PII analysis error: {e}")
+            logger.error(f"PII analysis error: {e}", exc_info=True)
             return text, {}
 
         if not analyzer_results:
             return text, {}
 
-        # Redact with default operator (replace with entity type)
-        operator_config = {
-            "DEFAULT": OperatorConfig("replace", {"new_value": "[REDACTED]"}),
-            "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "[EMAIL]"}),
-            "PHONE_NUMBER": OperatorConfig("replace", {"new_value": "[PHONE]"}),
-            "CREDIT_CARD": OperatorConfig("replace", {"new_value": "[CREDIT_CARD]"}),
-            "SSN": OperatorConfig("replace", {"new_value": "[SSN]"}),
-            "IP_ADDRESS": OperatorConfig("replace", {"new_value": "[IP]"}),
-        }
+        # Get operator configuration for redaction
+        operator_config = self._get_operator_config()
 
         try:
             anonymized_result = self.anonymizer.anonymize(
@@ -100,7 +146,7 @@ class PIIService:
             return redacted_text, entity_summary
         except Exception as e:
             # Log error but return original text
-            print(f"PII redaction error: {e}")
+            logger.error(f"PII redaction error: {e}", exc_info=True)
             return text, {}
 
 

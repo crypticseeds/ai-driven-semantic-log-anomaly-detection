@@ -134,8 +134,11 @@ Once the services are running, you can access them at the following endpoints:
 #### FastAPI Backend
 - **Root**: `GET http://localhost:8000/`
 - **Health Check**: `GET http://localhost:8000/health`
+- **Health Check (Kafka)**: `GET http://localhost:8000/health/kafka`
 - **API Docs**: `GET http://localhost:8000/docs`
 - **ReDoc**: `GET http://localhost:8000/redoc`
+- **Log Search**: `GET http://localhost:8000/api/v1/logs/search`
+- **Get Log by ID**: `GET http://localhost:8000/api/v1/logs/{log_id}`
 
 ### Programmatic Access
 
@@ -185,6 +188,34 @@ curl http://localhost:8000/health/kafka
 - **Partitions**: 3 per topic (for parallel processing)
 - **Retention**: 7 days or 1GB per topic
 - **Consumer Group**: `log-processor-group`
+
+#### PII Detection and Redaction (Presidio)
+
+This system uses [Microsoft Presidio](https://microsoft.github.io/presidio/) for automatic PII (Personally Identifiable Information) detection and redaction. All log entries are automatically scanned and redacted before storage and display.
+
+**Features:**
+- Automatic PII detection during log ingestion
+- PII redaction in search results and API responses
+- Support for multiple PII types: emails, phone numbers, SSN, credit cards, IP addresses, and more
+- Original logs preserved in `raw_log` field for audit purposes
+
+**PII Types Detected:**
+- Email addresses → `[EMAIL]`
+- Phone numbers → `[PHONE]`
+- Credit card numbers → `[CREDIT_CARD]`
+- Social Security Numbers → `[SSN]`
+- IP addresses → `[IP]`
+- Person names, passport numbers, driver's licenses, and more
+
+**Configuration:**
+- PII service: `backend/app/services/pii_service.py`
+- Full documentation: `docs/presidio-configuration.md`
+
+**Usage:**
+PII redaction happens automatically at three points:
+1. **During Ingestion**: Logs are redacted before storing in PostgreSQL
+2. **During Search**: Search results are redacted before being returned
+3. **Dashboard Display**: Logs are redacted via API before display
 
 #### PostgreSQL (Database)
 - **Host**: `localhost`

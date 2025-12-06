@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
 
+from app.api.v1.logs import router as logs_router
 from app.config import get_settings
 from app.db.postgres import Base
 from app.db.session import engine
@@ -57,6 +58,9 @@ instrument_fastapi(app)
 # Mount Prometheus metrics endpoint
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
+
+# Include API routers
+app.include_router(logs_router)
 
 
 @app.get("/health")
