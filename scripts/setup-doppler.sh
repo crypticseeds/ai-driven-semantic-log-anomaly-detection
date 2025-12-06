@@ -60,52 +60,52 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "Adding required secrets..."
     echo "(Press Enter to skip any secret)"
     echo ""
-    
+
     read -p "DATABASE_URL (e.g., postgresql://ailog:changeme@localhost:5432/ailog): " db_url
     if [ -n "$db_url" ]; then
         doppler secrets set DATABASE_URL="$db_url"
         echo "✅ DATABASE_URL set"
     fi
-    
+
     read -p "KAFKA_BOOTSTRAP_SERVERS (e.g., localhost:9092): " kafka_servers
     if [ -n "$kafka_servers" ]; then
         doppler secrets set KAFKA_BOOTSTRAP_SERVERS="$kafka_servers"
         echo "✅ KAFKA_BOOTSTRAP_SERVERS set"
     fi
-    
+
     echo ""
     echo "Optional secrets (press Enter to skip):"
-    
+
     read -p "OPENAI_API_KEY: " openai_key
     if [ -n "$openai_key" ]; then
         doppler secrets set OPENAI_API_KEY="$openai_key"
         echo "✅ OPENAI_API_KEY set"
     fi
-    
+
     read -p "QDRANT_URL: " qdrant_url
     if [ -n "$qdrant_url" ]; then
         doppler secrets set QDRANT_URL="$qdrant_url"
         echo "✅ QDRANT_URL set"
     fi
-    
+
     read -p "QDRANT_API_KEY: " qdrant_key
     if [ -n "$qdrant_key" ]; then
         doppler secrets set QDRANT_API_KEY="$qdrant_key"
         echo "✅ QDRANT_API_KEY set"
     fi
-    
+
     read -p "LANGFUSE_SECRET_KEY: " langfuse_secret
     if [ -n "$langfuse_secret" ]; then
         doppler secrets set LANGFUSE_SECRET_KEY="$langfuse_secret"
         echo "✅ LANGFUSE_SECRET_KEY set"
     fi
-    
+
     read -p "LANGFUSE_PUBLIC_KEY: " langfuse_public
     if [ -n "$langfuse_public" ]; then
         doppler secrets set LANGFUSE_PUBLIC_KEY="$langfuse_public"
         echo "✅ LANGFUSE_PUBLIC_KEY set"
     fi
-    
+
     read -p "LANGFUSE_HOST (default: http://langfuse:3000): " langfuse_host
     if [ -n "$langfuse_host" ]; then
         doppler secrets set LANGFUSE_HOST="$langfuse_host"
@@ -122,4 +122,3 @@ echo "2. Or use with Docker: doppler run -- docker-compose up"
 echo "3. View secrets: doppler secrets"
 echo "4. Update secrets: doppler secrets set KEY=value"
 echo ""
-

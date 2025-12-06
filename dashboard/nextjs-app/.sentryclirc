@@ -1,0 +1,6 @@
+[auth]
+token=
+
+[defaults]
+org=devopsfoundry-eg
+project=semantic-log-anomaly-detection-dashboard

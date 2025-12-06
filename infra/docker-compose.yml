@@ -233,4 +233,3 @@ volumes:
 networks:
   ai-log-network:
     driver: bridge
-

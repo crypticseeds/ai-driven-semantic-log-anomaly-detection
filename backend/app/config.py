@@ -91,6 +91,12 @@ class Settings(BaseSettings):
         description="OTLP gRPC endpoint",
     )
 
+    # Sentry
+    sentry_dsn: str | None = Field(
+        default=None,
+        description="Sentry DSN for error monitoring",
+    )
+
     # Application
     app_name: str = Field(
         default="AI Log Analytics",

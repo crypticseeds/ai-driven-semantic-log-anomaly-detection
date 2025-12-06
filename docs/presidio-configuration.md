@@ -226,4 +226,3 @@ To change the redaction placeholders, modify the `_get_operator_config()` method
 - [Presidio Documentation](https://microsoft.github.io/presidio/)
 - [Presidio Analyzer](https://github.com/microsoft/presidio/tree/main/presidio-analyzer)
 - [Presidio Anonymizer](https://github.com/microsoft/presidio/tree/main/presidio-anonymizer)
-
