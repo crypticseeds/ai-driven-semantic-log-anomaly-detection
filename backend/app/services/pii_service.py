@@ -23,6 +23,7 @@ class PIIService:
         """Lazily initialize and return the AnalyzerEngine."""
         if PIIService._analyzer is None:
             from presidio_analyzer import AnalyzerEngine
+
             PIIService._analyzer = AnalyzerEngine()
         return PIIService._analyzer
 
@@ -31,6 +32,7 @@ class PIIService:
         """Lazily initialize and return the AnonymizerEngine."""
         if PIIService._anonymizer is None:
             from presidio_anonymizer import AnonymizerEngine
+
             PIIService._anonymizer = AnonymizerEngine()
         return PIIService._anonymizer
 
