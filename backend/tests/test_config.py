@@ -46,4 +46,3 @@ def test_get_settings_uses_defaults():
 
     settings = get_settings()
     assert settings.database_url == "postgresql://ailog:changeme@localhost:5432/ailog"
-

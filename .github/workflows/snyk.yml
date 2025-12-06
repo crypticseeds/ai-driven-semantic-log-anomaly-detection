@@ -59,9 +59,10 @@ jobs:
           - name: backend
             path: infra/docker/backend.Dockerfile
             context: .
-          - name: dashboard
-            path: infra/docker/dashboard.Dockerfile
-            context: .
+          # Dashboard container scan disabled until dashboard frontend is built
+          # - name: dashboard
+          #   path: infra/docker/dashboard.Dockerfile
+          #   context: .
 
     steps:
       - name: Checkout code

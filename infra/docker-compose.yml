@@ -79,7 +79,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ../backend:/app
+      - ../backend:/app/backend
+      - ../pyproject.toml:/app/pyproject.toml:ro
+      - ../uv.lock:/app/uv.lock:ro
     networks:
       - ai-log-network
     depends_on:
@@ -90,7 +92,8 @@ services:
     restart: unless-stopped
     # Secrets are injected by Doppler CLI when running: doppler run -- docker-compose up
     # For CI/CD: doppler run --token=$DOPPLER_TOKEN -- docker-compose up
-    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    working_dir: /app/backend
+    command: uv run --frozen uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # Dashboard (Next.js)
   # Commented out: Dashboard not yet initialized (missing package.json)

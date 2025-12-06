@@ -35,7 +35,7 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run pytest backend/tests -v --cov=backend/app --cov-report=xml --cov-report=html || uv run pytest backend/tests -v
+          uv run python -m pytest backend/tests -v --cov=backend/app --cov-report=xml --cov-report=html || uv run python -m pytest backend/tests -v
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v4
