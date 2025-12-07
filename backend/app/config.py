@@ -56,6 +56,10 @@ class Settings(BaseSettings):
         default=None,
         description="OpenAI API key for embeddings",
     )
+    openai_budget: float | None = Field(
+        default=None,
+        description="Daily budget limit for OpenAI embeddings in USD (None = no limit)",
+    )
 
     # Qdrant
     qdrant_url: str | None = Field(

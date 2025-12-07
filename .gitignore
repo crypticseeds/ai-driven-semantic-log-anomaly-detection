@@ -265,3 +265,4 @@ infra/prometheus/data/
 
 # Tempo
 infra/tempo/data/
+OPENAI_EMBEDDING_INTEGRATION_GUIDE.md

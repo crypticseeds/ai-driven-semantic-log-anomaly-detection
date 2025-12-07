@@ -362,7 +362,15 @@ class TestIngestionFlow:
         """Test storing processed log entry to PostgreSQL and Qdrant."""
         # Mock embedding generation
         mock_embedding = [0.1] * 1536
-        mock_embedding_service.generate_embedding.return_value = mock_embedding
+        mock_embedding_result = {
+            "embedding": mock_embedding,
+            "model": "text-embedding-3-small",
+            "timestamp": datetime.utcnow(),
+            "cost_usd": 0.0001,
+            "tokens": 10,
+            "cached": False,
+        }
+        mock_embedding_service.generate_embedding.return_value = mock_embedding_result
 
         # Mock Qdrant storage
         mock_qdrant_service.store_vector.return_value = True
@@ -389,7 +397,9 @@ class TestIngestionFlow:
         assert saved_entry.message == "Test log message"
 
         # Verify embedding was generated
-        mock_embedding_service.generate_embedding.assert_called_once_with("Test log message")
+        mock_embedding_service.generate_embedding.assert_called_once_with(
+            "Test log message", use_cache=True
+        )
 
         # Verify Qdrant vector storage was called
         mock_qdrant_service.store_vector.assert_called_once()
@@ -408,7 +418,15 @@ class TestIngestionFlow:
         """Test end-to-end ingestion flow including PostgreSQL and Qdrant storage."""
         # Mock embedding generation
         mock_embedding = [0.2] * 1536
-        mock_embedding_service.generate_embedding.return_value = mock_embedding
+        mock_embedding_result = {
+            "embedding": mock_embedding,
+            "model": "text-embedding-3-small",
+            "timestamp": datetime.utcnow(),
+            "cost_usd": 0.0001,
+            "tokens": 10,
+            "cached": False,
+        }
+        mock_embedding_service.generate_embedding.return_value = mock_embedding_result
 
         # Mock Qdrant storage
         mock_qdrant_service.store_vector.return_value = True

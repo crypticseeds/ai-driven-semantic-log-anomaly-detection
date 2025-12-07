@@ -95,6 +95,18 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-ailog}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ailog}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # OpenAI Configuration (injected by Doppler)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BUDGET: ${OPENAI_BUDGET:-}
+      # Qdrant Configuration (injected by Doppler)
+      QDRANT_URL: ${QDRANT_URL:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      # Sentry Configuration (injected by Doppler)
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      # Langfuse Configuration (injected by Doppler)
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
     ports:
       - "8000:8000"
     volumes:

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.db.postgres import LogEntry
 from app.db.session import get_db
 from app.observability.metrics import http_requests_total
-from app.services.embedding_service import embedding_service
+from app.services.embedding_service import BudgetExceededError, embedding_service
 from app.services.pii_service import pii_service
 from app.services.qdrant_service import qdrant_service
 
@@ -186,9 +186,16 @@ async def _semantic_search(
         JSON response with search results
     """
     # Generate embedding for query
-    query_embedding = embedding_service.generate_embedding(query)
-    if not query_embedding:
-        raise HTTPException(status_code=500, detail="Failed to generate embedding for query")
+    try:
+        embedding_result = embedding_service.generate_embedding(query)
+        if not embedding_result or not embedding_result.get("embedding"):
+            raise HTTPException(status_code=500, detail="Failed to generate embedding for query")
+        query_embedding = embedding_result["embedding"]
+    except BudgetExceededError as e:
+        raise HTTPException(
+            status_code=429,
+            detail=f"OpenAI budget limit exceeded: {str(e)}. Please try again later or contact administrator.",
+        ) from e
 
     # Build Qdrant filter conditions
     filter_conditions = None
