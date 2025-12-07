@@ -38,3 +38,16 @@ vector_store_size = Gauge(
     "vector_store_size",
     "Number of vectors in Qdrant",
 )
+
+# Qdrant operation metrics
+qdrant_operations_total = Counter(
+    "qdrant_operations_total",
+    "Total Qdrant operations",
+    ["operation", "status"],
+)
+
+qdrant_operation_duration_seconds = Histogram(
+    "qdrant_operation_duration_seconds",
+    "Qdrant operation duration in seconds",
+    ["operation"],
+)

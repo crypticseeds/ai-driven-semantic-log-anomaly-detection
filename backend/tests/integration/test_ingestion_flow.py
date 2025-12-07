@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import text
@@ -353,8 +354,20 @@ class TestIngestionFlow:
         assert processed_log.level in ["INFO", "DEBUG", "WARN", "ERROR"]
         assert processed_log.service is not None
 
-    def test_storage_service(self, db_session: Session):
-        """Test storing processed log entry."""
+    @patch("app.services.storage_service.qdrant_service")
+    @patch("app.services.storage_service.embedding_service")
+    def test_storage_service(
+        self, mock_embedding_service, mock_qdrant_service, db_session: Session
+    ):
+        """Test storing processed log entry to PostgreSQL and Qdrant."""
+        # Mock embedding generation
+        mock_embedding = [0.1] * 1536
+        mock_embedding_service.generate_embedding.return_value = mock_embedding
+
+        # Mock Qdrant storage
+        mock_qdrant_service.store_vector.return_value = True
+        mock_qdrant_service.ensure_collection.return_value = True
+
         processed_log = ProcessedLogEntry(
             timestamp=datetime.utcnow(),
             level="ERROR",
@@ -368,15 +381,39 @@ class TestIngestionFlow:
         log_id = storage_service.save_log_entry(processed_log, db_session)
         assert log_id is not None
 
-        # Verify it was saved
+        # Verify PostgreSQL storage
         saved_entry = db_session.query(LogEntry).filter(LogEntry.id == log_id).first()
         assert saved_entry is not None
         assert saved_entry.level == "ERROR"
         assert saved_entry.service == "test-service"
         assert saved_entry.message == "Test log message"
 
-    def test_end_to_end_ingestion(self, db_session: Session):
-        """Test end-to-end ingestion flow."""
+        # Verify embedding was generated
+        mock_embedding_service.generate_embedding.assert_called_once_with("Test log message")
+
+        # Verify Qdrant vector storage was called
+        mock_qdrant_service.store_vector.assert_called_once()
+        call_args = mock_qdrant_service.store_vector.call_args
+        assert call_args[0][0] == log_id  # log_id
+        assert call_args[0][1] == mock_embedding  # embedding
+        assert call_args[0][2]["level"] == "ERROR"  # payload level
+        assert call_args[0][2]["service"] == "test-service"  # payload service
+        assert call_args[0][2]["pii_redacted"] is False  # payload pii_redacted
+
+    @patch("app.services.storage_service.qdrant_service")
+    @patch("app.services.storage_service.embedding_service")
+    def test_end_to_end_ingestion(
+        self, mock_embedding_service, mock_qdrant_service, db_session: Session
+    ):
+        """Test end-to-end ingestion flow including PostgreSQL and Qdrant storage."""
+        # Mock embedding generation
+        mock_embedding = [0.2] * 1536
+        mock_embedding_service.generate_embedding.return_value = mock_embedding
+
+        # Mock Qdrant storage
+        mock_qdrant_service.store_vector.return_value = True
+        mock_qdrant_service.ensure_collection.return_value = True
+
         raw_data = {
             "timestamp": "2024-01-15T10:30:45.123",
             "level": "INFO",
@@ -394,8 +431,17 @@ class TestIngestionFlow:
         log_id = storage_service.save_log_entry(processed_log, db_session)
         assert log_id is not None
 
-        # Verify storage
+        # Verify PostgreSQL storage
         saved_entry = db_session.query(LogEntry).filter(LogEntry.id == log_id).first()
         assert saved_entry is not None
         assert saved_entry.level == "INFO"
         assert saved_entry.service == "auth-service"
+
+        # Verify Qdrant vector storage was called
+        mock_embedding_service.generate_embedding.assert_called_once()
+        mock_qdrant_service.store_vector.assert_called_once()
+        call_args = mock_qdrant_service.store_vector.call_args
+        assert call_args[0][0] == log_id  # log_id
+        assert call_args[0][1] == mock_embedding  # embedding
+        assert call_args[0][2]["level"] == "INFO"  # payload level
+        assert call_args[0][2]["service"] == "auth-service"  # payload service
