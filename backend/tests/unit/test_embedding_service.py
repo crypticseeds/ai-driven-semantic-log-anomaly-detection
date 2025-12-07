@@ -44,6 +44,9 @@ class TestEmbeddingService:
         # Mock OpenAI client
         mock_client = MagicMock()
         mock_response = MagicMock()
+        mock_usage = MagicMock()
+        mock_usage.total_tokens = 10
+        mock_response.usage = mock_usage
         mock_response.data = [MagicMock(embedding=[0.1] * 1536)]
         mock_client.embeddings.create.return_value = mock_response
         mock_openai_class.return_value = mock_client
@@ -54,7 +57,13 @@ class TestEmbeddingService:
             result = service.generate_embedding("test text")
 
             assert result is not None
-            assert len(result) == 1536
+            assert "embedding" in result
+            assert len(result["embedding"]) == 1536
+            assert result["model"] == "text-embedding-3-small"
+            assert "cost_usd" in result
+            assert "tokens" in result
+            assert "timestamp" in result
+            assert "cached" in result
             mock_client.embeddings.create.assert_called_once_with(
                 model="text-embedding-3-small", input="test text"
             )
@@ -78,6 +87,9 @@ class TestEmbeddingService:
         """Test successful batch embedding generation."""
         mock_client = MagicMock()
         mock_response = MagicMock()
+        mock_usage = MagicMock()
+        mock_usage.total_tokens = 20
+        mock_response.usage = mock_usage
         # Create mock embeddings with index
         mock_embeddings = [
             MagicMock(index=0, embedding=[0.1] * 1536),
@@ -95,6 +107,8 @@ class TestEmbeddingService:
 
             assert len(results) == 2
             assert all(r is not None for r in results)
+            assert all("embedding" in r for r in results)
+            assert all(r["model"] == "text-embedding-3-small" for r in results)
             mock_client.embeddings.create.assert_called_once_with(
                 model="text-embedding-3-small", input=texts
             )
@@ -107,3 +121,43 @@ class TestEmbeddingService:
         results = service.generate_embeddings_batch(["text1", "text2"])
         assert len(results) == 2
         assert all(r is None for r in results)
+
+    def test_cache_functionality(self):
+        """Test embedding cache functionality."""
+        get_settings.cache_clear()
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}),
+            patch("app.services.embedding_service.OpenAI") as mock_openai_class,
+        ):
+            mock_client = MagicMock()
+            mock_response = MagicMock()
+            mock_usage = MagicMock()
+            mock_usage.total_tokens = 10
+            mock_response.usage = mock_usage
+            mock_response.data = [MagicMock(embedding=[0.1] * 1536)]
+            mock_client.embeddings.create.return_value = mock_response
+            mock_openai_class.return_value = mock_client
+
+            service = EmbeddingService()
+            text = "test text"
+
+            # First call should hit API
+            result1 = service.generate_embedding(text)
+            assert result1 is not None
+            assert result1["cached"] is False
+            assert mock_client.embeddings.create.call_count == 1
+
+            # Second call should use cache
+            result2 = service.generate_embedding(text)
+            assert result2 is not None
+            assert result2["cached"] is True
+            # Should not call API again
+            assert mock_client.embeddings.create.call_count == 1
+
+    def test_get_cache_stats(self):
+        """Test cache statistics."""
+        service = EmbeddingService()
+        stats = service.get_cache_stats()
+        assert "cache_size" in stats
+        assert "model" in stats
+        assert "vector_size" in stats

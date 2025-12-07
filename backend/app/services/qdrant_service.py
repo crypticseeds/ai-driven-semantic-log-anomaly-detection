@@ -253,7 +253,7 @@ class QdrantService:
             return {
                 "name": self.collection_name,
                 "points_count": collection_info.points_count,
-                "vectors_count": collection_info.vectors_count,
+                "vectors_count": collection_info.points_count,  # points_count represents vectors in Qdrant
                 "status": collection_info.status,
                 "config": {
                     "vector_size": collection_info.config.params.vectors.size,

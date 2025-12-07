@@ -216,7 +216,8 @@ class TestQdrantService:
         mock_client = MagicMock()
         mock_collection_info = MagicMock()
         mock_collection_info.points_count = 100
-        mock_collection_info.vectors_count = 100
+        # Note: vectors_count doesn't exist in Qdrant CollectionInfo, only points_count
+        # The service maps points_count to vectors_count for backward compatibility
         mock_collection_info.status = "green"
         mock_collection_info.config.params.vectors.size = 1536
         mock_collection_info.config.params.vectors.distance = "Cosine"

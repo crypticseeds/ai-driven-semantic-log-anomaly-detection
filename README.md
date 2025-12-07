@@ -54,6 +54,7 @@ sudo apt-get update && sudo apt-get install doppler
    doppler secrets set DATABASE_URL="postgresql://ailog:changeme@localhost:5432/ailog"
    doppler secrets set KAFKA_BOOTSTRAP_SERVERS="localhost:9092"
    doppler secrets set OPENAI_API_KEY="your-openai-api-key"
+   doppler secrets set OPENAI_BUDGET="10.0"  # Daily budget in USD (optional)
    doppler secrets set QDRANT_URL="your-qdrant-url"
    doppler secrets set QDRANT_API_KEY="your-qdrant-api-key"
    doppler secrets set LANGFUSE_SECRET_KEY="your-langfuse-secret-key"
@@ -65,6 +66,7 @@ sudo apt-get update && sudo apt-get install doppler
    - `DATABASE_URL` - PostgreSQL connection string
    - `KAFKA_BOOTSTRAP_SERVERS` - Kafka bootstrap servers
    - `OPENAI_API_KEY` - OpenAI API key for embeddings (optional)
+   - `OPENAI_BUDGET` - Daily budget limit for OpenAI embeddings in USD (optional, default: unlimited)
    - `QDRANT_URL` - Qdrant Cloud URL (optional)
    - `QDRANT_API_KEY` - Qdrant Cloud API key (optional)
    - `LANGFUSE_SECRET_KEY` - Langfuse secret key (optional)
@@ -188,6 +190,54 @@ curl http://localhost:8000/health/kafka
 - **Partitions**: 3 per topic (for parallel processing)
 - **Retention**: 7 days or 1GB per topic
 - **Consumer Group**: `log-processor-group`
+
+#### OpenAI Budget Management
+
+The system includes built-in budget enforcement for OpenAI API usage to control costs and prevent unexpected spending.
+
+**Features:**
+- **Daily Budget Limit**: Set a daily spending limit via `OPENAI_BUDGET` environment variable
+- **Automatic Tracking**: Daily spending is automatically tracked and reset at midnight UTC
+- **Budget Enforcement**: Requests are rejected when the daily budget is exceeded
+- **Cost Estimation**: Estimates cost before making API calls to prevent budget overruns
+- **Warning Thresholds**: Logs warnings when spending reaches 80% of budget
+- **Prometheus Metrics**: Budget metrics exposed for monitoring (`openai_daily_spending_usd`, `openai_budget_exceeded_total`)
+- **Cache-Aware**: Cached embeddings don't count toward the budget
+
+**Configuration:**
+```bash
+# Set daily budget to $10 USD
+doppler secrets set OPENAI_BUDGET="10.0"
+
+# Or via environment variable
+export OPENAI_BUDGET=10.0
+```
+
+**Budget Behavior:**
+- Budget resets automatically at midnight UTC each day
+- If budget is not set (or set to `None`), spending is unlimited
+- When budget is exceeded, embedding requests return HTTP 429 (Too Many Requests)
+- Budget tracking persists across service restarts (in-memory, resets on restart)
+- For production, consider using Redis or a database for persistent budget tracking
+
+**Monitoring:**
+- View current daily spending: Prometheus metric `openai_daily_spending_usd`
+- Track budget rejections: Prometheus counter `openai_budget_exceeded_total`
+- Budget statistics available via `embedding_service.get_budget_stats()`
+
+**Example:**
+```python
+# Get budget statistics
+stats = embedding_service.get_budget_stats()
+# Returns:
+# {
+#   "daily_budget_usd": 10.0,
+#   "current_daily_spending_usd": 3.45,
+#   "budget_remaining_usd": 6.55,
+#   "budget_utilization_percent": 34.5,
+#   "budget_enabled": True
+# }
+```
 
 #### PII Detection and Redaction (Presidio)
 

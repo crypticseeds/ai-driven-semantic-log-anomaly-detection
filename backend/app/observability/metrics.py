@@ -51,3 +51,51 @@ qdrant_operation_duration_seconds = Histogram(
     "Qdrant operation duration in seconds",
     ["operation"],
 )
+
+# OpenAI embedding metrics
+openai_embeddings_total = Counter(
+    "openai_embeddings_total",
+    "Total OpenAI embedding requests",
+    ["model", "status"],
+)
+
+openai_embedding_duration_seconds = Histogram(
+    "openai_embedding_duration_seconds",
+    "OpenAI embedding generation duration in seconds",
+    ["model"],
+)
+
+openai_embedding_cost_usd = Counter(
+    "openai_embedding_cost_usd",
+    "Total cost of OpenAI embeddings in USD",
+    ["model"],
+)
+
+openai_embedding_tokens_total = Counter(
+    "openai_embedding_tokens_total",
+    "Total tokens processed for embeddings",
+    ["model"],
+)
+
+openai_rate_limit_errors_total = Counter(
+    "openai_rate_limit_errors_total",
+    "Total OpenAI rate limit errors",
+    ["model"],
+)
+
+openai_embedding_cache_hits_total = Counter(
+    "openai_embedding_cache_hits_total",
+    "Total embedding cache hits",
+)
+
+openai_budget_exceeded_total = Counter(
+    "openai_budget_exceeded_total",
+    "Total requests rejected due to budget limit",
+    ["model"],
+)
+
+openai_daily_spending_usd = Gauge(
+    "openai_daily_spending_usd",
+    "Current daily spending for OpenAI embeddings in USD",
+    ["model"],
+)
