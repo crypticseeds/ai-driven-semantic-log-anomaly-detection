@@ -105,6 +105,28 @@ class Settings(BaseSettings):
         description="Sentry DSN for error monitoring",
     )
 
+    # HDBSCAN Clustering
+    hdbscan_min_cluster_size: int = Field(
+        default=5,
+        description="Minimum cluster size for HDBSCAN",
+    )
+    hdbscan_min_samples: int = Field(
+        default=3,
+        description="Minimum samples for HDBSCAN",
+    )
+    hdbscan_cluster_selection_epsilon: float = Field(
+        default=0.0,
+        description="Cluster selection epsilon for HDBSCAN",
+    )
+    hdbscan_max_cluster_size: int | None = Field(
+        default=None,
+        description="Maximum cluster size for HDBSCAN (None = no limit)",
+    )
+    hdbscan_sample_size: int | None = Field(
+        default=None,
+        description="Sample size for large datasets (None = use all data)",
+    )
+
     # Application
     app_name: str = Field(
         default="AI Log Analytics",

@@ -10,9 +10,10 @@ from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
-from app.db.postgres import LogEntry
+from app.db.postgres import AnomalyResult, ClusteringMetadata, LogEntry
 from app.db.session import get_db
 from app.observability.metrics import http_requests_total
+from app.services.clustering_service import clustering_service
 from app.services.embedding_service import BudgetExceededError, embedding_service
 from app.services.pii_service import pii_service
 from app.services.qdrant_service import qdrant_service
@@ -349,3 +350,241 @@ async def get_log(
     except Exception as e:
         http_requests_total.labels(method="GET", endpoint="/api/v1/logs/{log_id}", status=500).inc()
         raise HTTPException(status_code=500, detail=f"Error retrieving log: {str(e)}") from e
+
+
+@router.post("/clustering/run")
+async def run_clustering(
+    sample_size: Annotated[
+        int | None, Query(ge=100, description="Sample size for large datasets")
+    ] = None,
+    min_cluster_size: Annotated[
+        int | None, Query(ge=2, description="Minimum cluster size for HDBSCAN")
+    ] = None,
+    min_samples: Annotated[
+        int | None, Query(ge=1, description="Minimum samples for HDBSCAN")
+    ] = None,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Run HDBSCAN clustering on log embeddings.
+
+    This endpoint triggers clustering of all log embeddings stored in Qdrant.
+    Cluster assignments are stored in the AnomalyResult table, and cluster
+    metadata is stored in the ClusteringMetadata table.
+
+    Args:
+        sample_size: Optional sample size for large datasets (default from config)
+        min_cluster_size: Override default min_cluster_size (default from config)
+        min_samples: Override default min_samples (default from config)
+        db: Database session
+
+    Returns:
+        JSON response with clustering results
+    """
+    try:
+        result = clustering_service.perform_clustering(
+            sample_size=sample_size,
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
+            db=db,
+        )
+
+        if "error" in result:
+            http_requests_total.labels(
+                method="POST", endpoint="/api/v1/logs/clustering/run", status=500
+            ).inc()
+            raise HTTPException(status_code=500, detail=result["error"])
+
+        http_requests_total.labels(
+            method="POST", endpoint="/api/v1/logs/clustering/run", status=200
+        ).inc()
+
+        return JSONResponse(
+            content={
+                "status": "success",
+                "n_clusters": result["n_clusters"],
+                "n_outliers": result["n_outliers"],
+                "total_logs": len(result["cluster_assignments"]),
+                "cluster_metadata": result["cluster_metadata"],
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        http_requests_total.labels(
+            method="POST", endpoint="/api/v1/logs/clustering/run", status=500
+        ).inc()
+        raise HTTPException(status_code=500, detail=f"Error running clustering: {str(e)}") from e
+
+
+@router.get("/clustering/clusters")
+async def list_clusters(
+    limit: Annotated[int, Query(ge=1, le=100, description="Maximum number of clusters")] = 50,
+    offset: Annotated[int, Query(ge=0, description="Offset for pagination")] = 0,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """List all clusters with their metadata.
+
+    Args:
+        limit: Maximum number of clusters to return
+        offset: Offset for pagination
+        db: Database session
+
+    Returns:
+        JSON response with list of clusters
+    """
+    try:
+        clusters = (
+            db.query(ClusteringMetadata)
+            .order_by(ClusteringMetadata.cluster_size.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        result = [
+            {
+                "cluster_id": cluster.cluster_id,
+                "cluster_size": cluster.cluster_size,
+                "centroid": cluster.cluster_centroid,
+                "representative_logs": cluster.representative_logs,
+                "created_at": cluster.created_at.isoformat(),
+                "updated_at": cluster.updated_at.isoformat(),
+            }
+            for cluster in clusters
+        ]
+
+        # Get total count
+        total_count = db.query(ClusteringMetadata).count()
+
+        http_requests_total.labels(
+            method="GET", endpoint="/api/v1/logs/clustering/clusters", status=200
+        ).inc()
+
+        return JSONResponse(
+            content={
+                "clusters": result,
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+
+    except Exception as e:
+        http_requests_total.labels(
+            method="GET", endpoint="/api/v1/logs/clustering/clusters", status=500
+        ).inc()
+        raise HTTPException(status_code=500, detail=f"Error listing clusters: {str(e)}") from e
+
+
+@router.get("/clustering/clusters/{cluster_id}")
+async def get_cluster(
+    cluster_id: int,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Get detailed information about a specific cluster.
+
+    Args:
+        cluster_id: Cluster ID to retrieve
+        db: Database session
+
+    Returns:
+        JSON response with cluster information including sample logs
+    """
+    try:
+        cluster_info = clustering_service.get_cluster_info(cluster_id, db)
+
+        if not cluster_info:
+            http_requests_total.labels(
+                method="GET", endpoint="/api/v1/logs/clustering/clusters/{cluster_id}", status=404
+            ).inc()
+            raise HTTPException(status_code=404, detail=f"Cluster {cluster_id} not found")
+
+        http_requests_total.labels(
+            method="GET", endpoint="/api/v1/logs/clustering/clusters/{cluster_id}", status=200
+        ).inc()
+
+        return JSONResponse(content=cluster_info)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        http_requests_total.labels(
+            method="GET", endpoint="/api/v1/logs/clustering/clusters/{cluster_id}", status=500
+        ).inc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving cluster: {str(e)}") from e
+
+
+@router.get("/clustering/outliers")
+async def get_outliers(
+    limit: Annotated[int, Query(ge=1, le=1000, description="Maximum number of outliers")] = 100,
+    offset: Annotated[int, Query(ge=0, description="Offset for pagination")] = 0,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Get outlier logs (cluster_id = -1).
+
+    Args:
+        limit: Maximum number of outliers to return
+        offset: Offset for pagination
+        db: Database session
+
+    Returns:
+        JSON response with list of outlier logs
+    """
+    try:
+        # Get anomaly results with cluster_id = -1
+        outlier_results = (
+            db.query(AnomalyResult)
+            .filter(AnomalyResult.cluster_id == -1)
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        # Get corresponding log entries
+        log_ids = [result.log_entry_id for result in outlier_results]
+        log_entries = db.query(LogEntry).filter(LogEntry.id.in_(log_ids)).all()
+
+        # Create a mapping for quick lookup
+        log_dict = {log.id: log for log in log_entries}
+
+        result = []
+        for outlier_result in outlier_results:
+            log_entry = log_dict.get(outlier_result.log_entry_id)
+            if log_entry:
+                # Redact PII from message
+                redacted_message, pii_entities = pii_service.redact_pii(log_entry.message)
+
+                result.append(
+                    {
+                        "id": str(log_entry.id),
+                        "timestamp": log_entry.timestamp.isoformat(),
+                        "level": log_entry.level,
+                        "service": log_entry.service,
+                        "message": redacted_message,
+                        "anomaly_score": outlier_result.anomaly_score,
+                        "created_at": log_entry.created_at.isoformat(),
+                    }
+                )
+
+        # Get total count
+        total_count = db.query(AnomalyResult).filter(AnomalyResult.cluster_id == -1).count()
+
+        http_requests_total.labels(
+            method="GET", endpoint="/api/v1/logs/clustering/outliers", status=200
+        ).inc()
+
+        return JSONResponse(
+            content={
+                "outliers": result,
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+
+    except Exception as e:
+        http_requests_total.labels(
+            method="GET", endpoint="/api/v1/logs/clustering/outliers", status=500
+        ).inc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving outliers: {str(e)}") from e
