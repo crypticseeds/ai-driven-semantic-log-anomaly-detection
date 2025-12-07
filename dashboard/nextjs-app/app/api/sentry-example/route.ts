@@ -36,3 +36,5 @@ export async function POST() {
   // This endpoint intentionally throws an error to test error monitoring
   throw new Error("This is a test error from the API route!");
 }
+
+

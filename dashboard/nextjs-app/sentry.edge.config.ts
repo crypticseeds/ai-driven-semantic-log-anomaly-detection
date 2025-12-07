@@ -16,3 +16,5 @@ Sentry.init({
   // Enable logs
   enableLogs: true,
 });
+
+

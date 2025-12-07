@@ -264,6 +264,80 @@ class QdrantService:
             logger.error(f"Error getting collection info: {e}", exc_info=True)
             return None
 
+    def get_all_embeddings(
+        self, limit: int | None = None, filter_conditions: Filter | None = None
+    ) -> list[dict[str, Any]]:
+        """Retrieve all embeddings from Qdrant for clustering.
+
+        Args:
+            limit: Optional limit on number of points to retrieve (None = all)
+            filter_conditions: Optional Qdrant filter for metadata
+
+        Returns:
+            List of dictionaries with 'id', 'vector', and 'payload' for each point
+        """
+        if not self.client:
+            logger.error("Qdrant client not initialized.")
+            return []
+
+        if not self.ensure_collection():
+            return []
+
+        start_time = time.time()
+        try:
+            all_points = []
+            offset = None
+
+            while True:
+                # Use scroll to retrieve points in batches
+                result, next_offset = self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=10000,  # Qdrant's max scroll limit
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=True,
+                    scroll_filter=filter_conditions,
+                )
+
+                all_points.extend(result)
+
+                if next_offset is None or (limit and len(all_points) >= limit):
+                    break
+
+                offset = next_offset
+
+            # Apply limit if specified
+            if limit and len(all_points) > limit:
+                all_points = all_points[:limit]
+
+            duration = time.time() - start_time
+            qdrant_operation_duration_seconds.labels(operation="get_all_embeddings").observe(
+                duration
+            )
+            qdrant_operations_total.labels(operation="get_all_embeddings", status="success").inc()
+
+            # Format results
+            results = [
+                {
+                    "id": point.id,
+                    "vector": point.vector if hasattr(point, "vector") else None,
+                    "payload": point.payload or {},
+                }
+                for point in all_points
+            ]
+
+            logger.info(f"Retrieved {len(results)} embeddings from Qdrant")
+            return results
+
+        except Exception as e:
+            duration = time.time() - start_time
+            qdrant_operation_duration_seconds.labels(operation="get_all_embeddings").observe(
+                duration
+            )
+            qdrant_operations_total.labels(operation="get_all_embeddings", status="error").inc()
+            logger.error(f"Error retrieving embeddings: {e}", exc_info=True)
+            return []
+
     def _update_vector_store_size(self) -> None:
         """Update the vector_store_size metric."""
         try:

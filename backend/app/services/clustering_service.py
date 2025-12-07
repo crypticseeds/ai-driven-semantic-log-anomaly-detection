@@ -1,0 +1,351 @@
+"""HDBSCAN clustering service for log embeddings."""
+
+import logging
+import random
+from typing import Any
+from uuid import UUID
+
+import numpy as np
+from hdbscan import HDBSCAN
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.db.postgres import AnomalyResult, ClusteringMetadata, LogEntry
+from app.db.session import get_db
+from app.services.qdrant_service import qdrant_service
+
+logger = logging.getLogger(__name__)
+
+
+class ClusteringService:
+    """Service for HDBSCAN clustering of log embeddings."""
+
+    def __init__(self):
+        """Initialize clustering service."""
+        self.settings = get_settings()
+        self.qdrant_service = qdrant_service
+
+    def perform_clustering(
+        self,
+        sample_size: int | None = None,
+        min_cluster_size: int | None = None,
+        min_samples: int | None = None,
+        db: Session | None = None,
+    ) -> dict[str, Any]:
+        """Perform HDBSCAN clustering on log embeddings.
+
+        Args:
+            sample_size: Optional sample size for large datasets (None = use all)
+            min_cluster_size: Override default min_cluster_size from config
+            min_samples: Override default min_samples from config
+            db: Optional database session
+
+        Returns:
+            Dictionary with clustering results including:
+            - n_clusters: Number of clusters found
+            - n_outliers: Number of outliers (cluster_id = -1)
+            - cluster_assignments: Dict mapping log_id to cluster_id
+            - cluster_metadata: Dict with cluster statistics
+        """
+        if db is None:
+            db = next(get_db())
+
+        try:
+            # Get configuration
+            min_cluster_size = min_cluster_size or self.settings.hdbscan_min_cluster_size
+            min_samples = min_samples or self.settings.hdbscan_min_samples
+            sample_size = sample_size or self.settings.hdbscan_sample_size
+
+            logger.info(
+                f"Starting HDBSCAN clustering with min_cluster_size={min_cluster_size}, "
+                f"min_samples={min_samples}, sample_size={sample_size}"
+            )
+
+            # Extract embeddings from Qdrant
+            logger.info("Extracting embeddings from Qdrant...")
+            embeddings_data = self.qdrant_service.get_all_embeddings(limit=sample_size)
+
+            if not embeddings_data:
+                logger.warning("No embeddings found in Qdrant")
+                return {
+                    "n_clusters": 0,
+                    "n_outliers": 0,
+                    "cluster_assignments": {},
+                    "cluster_metadata": {},
+                    "error": "No embeddings found",
+                }
+
+            # Filter out points without vectors
+            valid_embeddings = [
+                (UUID(emb["id"]), emb["vector"])
+                for emb in embeddings_data
+                if emb.get("vector") is not None
+            ]
+
+            if not valid_embeddings:
+                logger.warning("No valid embeddings found")
+                return {
+                    "n_clusters": 0,
+                    "n_outliers": 0,
+                    "cluster_assignments": {},
+                    "cluster_metadata": {},
+                    "error": "No valid embeddings found",
+                }
+
+            log_ids, vectors = zip(*valid_embeddings, strict=True)
+            log_ids = list(log_ids)
+            vectors_array = np.array(vectors)
+
+            logger.info(f"Clustering {len(vectors_array)} embeddings...")
+
+            # Apply sampling if needed for very large datasets
+            if sample_size and len(vectors_array) > sample_size:
+                logger.info(f"Sampling {sample_size} embeddings from {len(vectors_array)} total")
+                indices = random.sample(range(len(vectors_array)), sample_size)
+                vectors_array = vectors_array[indices]
+                log_ids = [log_ids[i] for i in indices]
+
+            # Configure and run HDBSCAN
+            clusterer = HDBSCAN(
+                min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
+                cluster_selection_epsilon=self.settings.hdbscan_cluster_selection_epsilon,
+                max_cluster_size=self.settings.hdbscan_max_cluster_size,
+                metric="euclidean",
+                cluster_selection_method="eom",
+            )
+
+            cluster_labels = clusterer.fit_predict(vectors_array)
+
+            # Process results
+            cluster_assignments = {
+                str(log_id): int(cluster_id)
+                for log_id, cluster_id in zip(log_ids, cluster_labels, strict=True)
+            }
+
+            # Count clusters and outliers
+            unique_clusters = set(cluster_labels)
+            n_clusters = len(unique_clusters) - (1 if -1 in unique_clusters else 0)
+            n_outliers = int(np.sum(cluster_labels == -1))
+
+            logger.info(
+                f"Clustering complete: {n_clusters} clusters, {n_outliers} outliers "
+                f"({n_outliers / len(cluster_labels) * 100:.1f}%)"
+            )
+
+            # Store cluster assignments in database
+            self._store_cluster_assignments(cluster_assignments, db)
+
+            # Calculate cluster metadata
+            cluster_metadata = self._calculate_cluster_metadata(
+                cluster_labels, log_ids, vectors_array, db
+            )
+
+            return {
+                "n_clusters": n_clusters,
+                "n_outliers": n_outliers,
+                "cluster_assignments": cluster_assignments,
+                "cluster_metadata": cluster_metadata,
+            }
+
+        except Exception as e:
+            logger.error(f"Error performing clustering: {e}", exc_info=True)
+            if db:
+                db.rollback()
+            return {
+                "n_clusters": 0,
+                "n_outliers": 0,
+                "cluster_assignments": {},
+                "cluster_metadata": {},
+                "error": str(e),
+            }
+        finally:
+            if db:
+                db.close()
+
+    def _store_cluster_assignments(self, cluster_assignments: dict[str, int], db: Session) -> None:
+        """Store cluster assignments in AnomalyResult table.
+
+        Args:
+            cluster_assignments: Dict mapping log_id (str) to cluster_id (int)
+            db: Database session
+        """
+        try:
+            stored_count = 0
+            for log_id_str, cluster_id in cluster_assignments.items():
+                try:
+                    log_id = UUID(log_id_str)
+
+                    # Check if AnomalyResult already exists for this log
+                    existing = (
+                        db.query(AnomalyResult).filter(AnomalyResult.log_entry_id == log_id).first()
+                    )
+
+                    if existing:
+                        # Update existing record
+                        existing.cluster_id = cluster_id
+                        existing.detection_method = "HDBSCAN"
+                    else:
+                        # Create new record
+                        anomaly_result = AnomalyResult(
+                            log_entry_id=log_id,
+                            cluster_id=cluster_id,
+                            detection_method="HDBSCAN",
+                            anomaly_score=0.0,  # Will be calculated separately if needed
+                            is_anomaly=(cluster_id == -1),  # Outliers are anomalies
+                        )
+                        db.add(anomaly_result)
+
+                    stored_count += 1
+                except ValueError:
+                    logger.warning(f"Invalid UUID format: {log_id_str}")
+                    continue
+
+            db.commit()
+            logger.info(f"Stored {stored_count} cluster assignments in database")
+
+        except Exception as e:
+            logger.error(f"Error storing cluster assignments: {e}", exc_info=True)
+            db.rollback()
+            raise
+
+    def _calculate_cluster_metadata(
+        self,
+        cluster_labels: np.ndarray,
+        log_ids: list[UUID],
+        vectors: np.ndarray,
+        db: Session,
+    ) -> dict[int, dict[str, Any]]:
+        """Calculate and store metadata for each cluster.
+
+        Args:
+            cluster_labels: Array of cluster labels
+            log_ids: List of log IDs corresponding to labels
+            vectors: Array of embedding vectors
+            db: Database session
+
+        Returns:
+            Dictionary mapping cluster_id to metadata
+        """
+        try:
+            cluster_metadata = {}
+            unique_clusters = set(cluster_labels)
+
+            for cluster_id in unique_clusters:
+                if cluster_id == -1:
+                    continue  # Skip outliers
+
+                # Get indices for this cluster
+                cluster_indices = np.where(cluster_labels == cluster_id)[0]
+                cluster_vectors = vectors[cluster_indices]
+                cluster_log_ids = [log_ids[i] for i in cluster_indices]
+
+                # Calculate centroid
+                centroid = np.mean(cluster_vectors, axis=0).tolist()
+
+                # Get representative logs (sample of log IDs)
+                representative_logs = [
+                    str(log_id) for log_id in cluster_log_ids[:10]
+                ]  # First 10 as representatives
+
+                metadata = {
+                    "cluster_id": int(cluster_id),
+                    "cluster_size": len(cluster_indices),
+                    "centroid": centroid,
+                    "representative_logs": representative_logs,
+                }
+
+                cluster_metadata[int(cluster_id)] = metadata
+
+                # Store in database
+                existing = (
+                    db.query(ClusteringMetadata)
+                    .filter(ClusteringMetadata.cluster_id == cluster_id)
+                    .first()
+                )
+
+                if existing:
+                    existing.cluster_size = metadata["cluster_size"]
+                    existing.cluster_centroid = metadata["centroid"]
+                    existing.representative_logs = metadata["representative_logs"]
+                else:
+                    clustering_metadata = ClusteringMetadata(
+                        cluster_id=int(cluster_id),
+                        cluster_size=metadata["cluster_size"],
+                        cluster_centroid=metadata["centroid"],
+                        representative_logs=metadata["representative_logs"],
+                    )
+                    db.add(clustering_metadata)
+
+            db.commit()
+            logger.info(f"Stored metadata for {len(cluster_metadata)} clusters")
+
+            return cluster_metadata
+
+        except Exception as e:
+            logger.error(f"Error calculating cluster metadata: {e}", exc_info=True)
+            db.rollback()
+            return {}
+
+    def get_cluster_info(self, cluster_id: int, db: Session | None = None) -> dict[str, Any] | None:
+        """Get information about a specific cluster.
+
+        Args:
+            cluster_id: Cluster ID to query
+            db: Optional database session
+
+        Returns:
+            Dictionary with cluster information or None if not found
+        """
+        if db is None:
+            db = next(get_db())
+
+        try:
+            metadata = (
+                db.query(ClusteringMetadata)
+                .filter(ClusteringMetadata.cluster_id == cluster_id)
+                .first()
+            )
+
+            if not metadata:
+                return None
+
+            # Get log entries in this cluster
+            anomaly_results = (
+                db.query(AnomalyResult).filter(AnomalyResult.cluster_id == cluster_id).all()
+            )
+
+            log_entries = (
+                db.query(LogEntry)
+                .filter(LogEntry.id.in_([ar.log_entry_id for ar in anomaly_results]))
+                .limit(100)
+                .all()
+            )
+
+            return {
+                "cluster_id": metadata.cluster_id,
+                "cluster_size": metadata.cluster_size,
+                "centroid": metadata.cluster_centroid,
+                "representative_logs": metadata.representative_logs,
+                "sample_logs": [
+                    {
+                        "id": str(log.id),
+                        "message": log.message,
+                        "level": log.level,
+                        "service": log.service,
+                        "timestamp": log.timestamp.isoformat(),
+                    }
+                    for log in log_entries
+                ],
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting cluster info: {e}", exc_info=True)
+            return None
+        finally:
+            if db:
+                db.close()
+
+
+# Global instance
+clustering_service = ClusteringService()

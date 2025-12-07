@@ -266,3 +266,5 @@ infra/prometheus/data/
 # Tempo
 infra/tempo/data/
 OPENAI_EMBEDDING_INTEGRATION_GUIDE.md
+docs/presidio-configuration.md
+verification_guide.md
