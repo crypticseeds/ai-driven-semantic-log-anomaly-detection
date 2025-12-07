@@ -141,6 +141,13 @@ Once the services are running, you can access them at the following endpoints:
 - **ReDoc**: `GET http://localhost:8000/redoc`
 - **Log Search**: `GET http://localhost:8000/api/v1/logs/search`
 - **Get Log by ID**: `GET http://localhost:8000/api/v1/logs/{log_id}`
+- **Run Clustering**: `POST http://localhost:8000/api/v1/logs/clustering/run`
+- **List Clusters**: `GET http://localhost:8000/api/v1/logs/clustering/clusters`
+- **Get Outliers**: `GET http://localhost:8000/api/v1/logs/clustering/outliers`
+- **Detect Anomalies (IsolationForest)**: `POST http://localhost:8000/api/v1/logs/anomaly-detection/isolation-forest`
+- **Detect Anomalies (Z-score)**: `POST http://localhost:8000/api/v1/logs/anomaly-detection/z-score`
+- **Detect Anomalies (IQR)**: `POST http://localhost:8000/api/v1/logs/anomaly-detection/iqr`
+- **Score Log Entry**: `POST http://localhost:8000/api/v1/logs/anomaly-detection/score/{log_id}`
 
 ### Programmatic Access
 
@@ -266,6 +273,235 @@ PII redaction happens automatically at three points:
 1. **During Ingestion**: Logs are redacted before storing in PostgreSQL
 2. **During Search**: Search results are redacted before being returned
 3. **Dashboard Display**: Logs are redacted via API before display
+
+#### HDBSCAN Semantic Clustering
+
+This system uses [HDBSCAN](https://hdbscan.readthedocs.io/) (Hierarchical Density-Based Spatial Clustering of Applications with Noise) for semantic clustering of log embeddings. HDBSCAN is a powerful clustering algorithm that groups similar log entries based on their semantic embeddings, enabling automatic pattern discovery and anomaly detection.
+
+**What is HDBSCAN?**
+
+HDBSCAN is an advanced clustering algorithm that extends DBSCAN with hierarchical clustering capabilities. It's particularly well-suited for:
+- **Variable density clusters**: Handles clusters of different densities effectively
+- **Outlier detection**: Automatically identifies outliers (noise points) as cluster ID -1
+- **No pre-specified cluster count**: Automatically determines the optimal number of clusters
+- **Robust to noise**: Handles noisy data better than traditional clustering methods
+
+**How HDBSCAN Works in This Project:**
+
+1. **Embedding Extraction**: Log entries are converted to semantic embeddings using OpenAI's embedding model and stored in Qdrant vector database
+2. **Clustering**: HDBSCAN analyzes the embedding vectors to identify groups of semantically similar logs
+3. **Cluster Assignment**: Each log entry is assigned to a cluster (or marked as an outlier with cluster_id = -1)
+4. **Metadata Storage**: Cluster statistics, centroids, and representative logs are stored in the database
+5. **Anomaly Detection**: Outliers (cluster_id = -1) are automatically flagged as anomalies
+
+**Key Features:**
+
+- **Semantic Clustering**: Groups logs based on meaning, not just exact text matches
+- **Automatic Outlier Detection**: Identifies anomalous log entries that don't fit into any cluster
+- **Variable Cluster Sizes**: Handles both large and small clusters effectively
+- **No Manual Tuning**: Automatically determines optimal number of clusters
+- **Persistent Storage**: Cluster assignments and metadata stored in PostgreSQL
+- **Scalable**: Supports sampling for very large datasets
+
+**Configuration:**
+
+The clustering service can be configured via environment variables or settings:
+
+```python
+# Configuration options (with defaults)
+HDBSCAN_MIN_CLUSTER_SIZE=5      # Minimum points to form a cluster
+HDBSCAN_MIN_SAMPLES=3           # Minimum samples in neighborhood
+HDBSCAN_SAMPLE_SIZE=None        # Optional: sample size for large datasets
+HDBSCAN_CLUSTER_SELECTION_EPSILON=0.0  # Epsilon for cluster selection
+HDBSCAN_MAX_CLUSTER_SIZE=None   # Optional: maximum cluster size
+```
+
+**Usage:**
+
+The clustering service is available via the `ClusteringService` class:
+
+```python
+from app.services.clustering_service import clustering_service
+
+# Perform clustering on all embeddings
+result = clustering_service.perform_clustering()
+
+# With custom parameters
+result = clustering_service.perform_clustering(
+    sample_size=10000,          # Sample 10k embeddings for large datasets
+    min_cluster_size=10,         # Require at least 10 points per cluster
+    min_samples=5                # Require at least 5 samples in neighborhood
+)
+
+# Result structure:
+# {
+#     "n_clusters": 15,           # Number of clusters found
+#     "n_outliers": 42,           # Number of outliers (anomalies)
+#     "cluster_assignments": {    # Mapping of log_id to cluster_id
+#         "log-uuid-1": 0,
+#         "log-uuid-2": 0,
+#         "log-uuid-3": -1,       # -1 indicates outlier/anomaly
+#         ...
+#     },
+#     "cluster_metadata": {       # Statistics for each cluster
+#         0: {
+#             "cluster_id": 0,
+#             "cluster_size": 150,
+#             "centroid": [...],  # Cluster center in embedding space
+#             "representative_logs": ["uuid1", "uuid2", ...]
+#         },
+#         ...
+#     }
+# }
+
+# Get information about a specific cluster
+cluster_info = clustering_service.get_cluster_info(cluster_id=0)
+```
+
+**Cluster Results:**
+
+- **Cluster IDs**: Positive integers (0, 1, 2, ...) represent valid clusters
+- **Outlier ID**: `-1` represents outliers/anomalies that don't belong to any cluster
+- **Cluster Metadata**: Each cluster stores its size, centroid, and representative log entries
+- **Anomaly Detection**: Logs with `cluster_id = -1` are automatically marked as anomalies
+
+**Benefits for Log Analysis:**
+
+1. **Pattern Discovery**: Automatically groups similar log patterns together
+2. **Anomaly Detection**: Identifies unusual log entries that don't match common patterns
+3. **Root Cause Analysis**: Clusters help identify related issues and their scope
+4. **Reduced Noise**: Focuses attention on clusters and outliers rather than individual logs
+5. **Scalability**: Handles large volumes of logs efficiently with optional sampling
+
+**Service Location:**
+
+- Clustering service: `backend/app/services/clustering_service.py`
+- Database models: `backend/app/db/postgres.py` (AnomalyResult, ClusteringMetadata)
+
+#### Hybrid/Tiered Anomaly Detection Pipeline
+
+This system uses a **hybrid two-tier detection approach** that combines fast statistical methods with intelligent LLM validation to achieve both speed and accuracy in anomaly detection.
+
+**What is the Hybrid Approach?**
+
+The hybrid pipeline uses two tiers:
+- **Tier 1 (Fast Detection)**: Statistical methods (IsolationForest, Z-score, IQR) run on every log entry for real-time detection
+- **Tier 2 (Smart Validation)**: LLM semantic validation runs only on high-scoring anomalies to reduce false positives and provide explanations
+
+**How It Works:**
+
+**Real-Time Pipeline (During Log Ingestion):**
+
+1. **Tier 1 - Fast Statistical Detection**:
+   - IsolationForest runs on every new log entry as it's stored
+   - Provides immediate anomaly scoring
+   - Fast and cost-effective (no LLM calls for normal logs)
+
+2. **Tier 2 - LLM Validation** (conditional):
+   - Triggers only when:
+     - Tier 1 flags the log as anomalous (`is_anomaly = True`)
+     - Anomaly score exceeds threshold (default: 0.7)
+   - LLM validates the anomaly semantically
+   - Provides explanation for why the log is anomalous
+   - Reduces false positives by confirming true anomalies
+
+3. **Result Storage**:
+   - All results stored in `AnomalyResult` table
+   - LLM reasoning stored in `llm_reasoning` field
+   - Explanations always generated (fallback to explanation-only if detection fails)
+
+**Batch Pipeline (HDBSCAN Clustering):**
+
+1. **Tier 1 - HDBSCAN Clustering**:
+   - Groups log embeddings into semantic clusters
+   - Identifies outliers (cluster_id = -1) as potential anomalies
+
+2. **Tier 2 - LLM Validation**:
+   - Validates each outlier with LLM semantic analysis
+   - Confirms or rejects HDBSCAN outlier classification
+   - Generates explanations for confirmed anomalies
+
+**Key Features:**
+
+- **Cost-Effective**: LLM only runs on ~10-20% of logs (high-scoring anomalies)
+- **Fast Real-Time**: Statistical methods provide immediate results
+- **High Accuracy**: LLM validation reduces false positives
+- **Always Explained**: Every anomaly gets LLM reasoning (detection + explanation or explanation-only fallback)
+- **Configurable Thresholds**: Adjust when LLM validation triggers
+
+**Configuration:**
+
+The hybrid detection pipeline can be configured via environment variables:
+
+```bash
+# Anomaly Detection Thresholds
+ANOMALY_SCORE_THRESHOLD=0.7              # Score threshold to trigger LLM validation (0.0-1.0)
+LLM_VALIDATION_ENABLED=true              # Enable/disable LLM validation
+LLM_VALIDATION_CONFIDENCE_THRESHOLD=0.6  # Minimum LLM confidence to confirm anomaly (0.0-1.0)
+```
+
+**Detection Methods Available:**
+
+1. **IsolationForest** (default for real-time):
+   - Unsupervised anomaly detection
+   - Works well with high-dimensional embeddings
+   - Fast and scalable
+
+2. **Z-score**:
+   - Statistical outlier detection
+   - Based on standard deviations from mean
+   - Good for normally distributed data
+
+3. **IQR (Interquartile Range)**:
+   - Statistical method using quartiles
+   - Robust to outliers
+   - Good for skewed distributions
+
+4. **HDBSCAN** (batch):
+   - Semantic clustering with automatic outlier detection
+   - Groups similar logs, flags outliers
+
+5. **LLM Validation** (Tier 2):
+   - Semantic understanding of log content
+   - Context-aware anomaly detection
+   - Provides human-readable explanations
+
+**Usage Example:**
+
+```python
+# Real-time detection happens automatically during log storage
+# Results are stored in AnomalyResult table with:
+# - detection_method: "IsolationForest" (or "HDBSCAN" for batch)
+# - is_anomaly: True/False
+# - anomaly_score: 0.0-1.0
+# - llm_reasoning: Explanation text (if LLM validation ran)
+
+# Query anomalies
+from app.db.postgres import AnomalyResult
+anomalies = db.query(AnomalyResult).filter(AnomalyResult.is_anomaly == True).all()
+
+for anomaly in anomalies:
+    print(f"Anomaly: {anomaly.anomaly_score:.2f}")
+    print(f"Method: {anomaly.detection_method}")
+    print(f"Explanation: {anomaly.llm_reasoning}")
+```
+
+**Benefits:**
+
+1. **Speed**: Fast statistical methods provide immediate results
+2. **Accuracy**: LLM validation reduces false positives
+3. **Cost Control**: LLM only runs on high-confidence anomalies
+4. **Explainability**: Every anomaly gets semantic explanation
+5. **Flexibility**: Multiple detection methods available
+6. **Scalability**: Handles high-volume log streams efficiently
+
+**Service Locations:**
+
+- Real-time detection: `backend/app/services/storage_service.py`
+- Batch detection: `backend/app/services/clustering_service.py`
+- Anomaly detection methods: `backend/app/services/anomaly_detection_service.py`
+- LLM validation: `backend/app/services/llm_reasoning_service.py`
+- Database models: `backend/app/db/postgres.py` (AnomalyResult)
 
 #### PostgreSQL (Database)
 - **Host**: `localhost`

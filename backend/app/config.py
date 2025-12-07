@@ -127,6 +127,20 @@ class Settings(BaseSettings):
         description="Sample size for large datasets (None = use all data)",
     )
 
+    # Anomaly Detection Thresholds
+    anomaly_score_threshold: float = Field(
+        default=0.7,
+        description="Anomaly score threshold for triggering LLM validation (0.0 to 1.0)",
+    )
+    llm_validation_enabled: bool = Field(
+        default=True,
+        description="Enable LLM validation for high-scoring anomalies",
+    )
+    llm_validation_confidence_threshold: float = Field(
+        default=0.6,
+        description="Minimum LLM confidence to confirm anomaly (0.0 to 1.0)",
+    )
+
     # Application
     app_name: str = Field(
         default="AI Log Analytics",
