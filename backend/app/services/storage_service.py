@@ -5,10 +5,13 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.db.postgres import LogEntry
+from app.config import get_settings
+from app.db.postgres import AnomalyResult, LogEntry
 from app.db.session import get_db
 from app.models.log import ProcessedLogEntry
+from app.services.anomaly_detection_service import anomaly_detection_service
 from app.services.embedding_service import BudgetExceededError, embedding_service
+from app.services.llm_reasoning_service import llm_reasoning_service
 from app.services.qdrant_service import qdrant_service
 
 logger = logging.getLogger(__name__)
@@ -100,6 +103,129 @@ class StorageService:
                     f"Stored vector embedding for log_id: {log_id} "
                     f"(cached: {embedding_result.get('cached', False)})"
                 )
+
+                # Real-time scoring pipeline: Hybrid/Tiered Detection
+                # Tier 1: Fast statistical method (IsolationForest)
+                # Tier 2: LLM validation for high-scoring anomalies
+                try:
+                    db = next(get_db())
+                    try:
+                        settings = get_settings()
+
+                        # Tier 1: Run IsolationForest
+                        tier1_result = anomaly_detection_service.score_log_entry(
+                            log_id=log_id, method="IsolationForest", db=db
+                        )
+
+                        if tier1_result:
+                            tier1_score = tier1_result.get("anomaly_score", 0.0)
+                            tier1_is_anomaly = tier1_result.get("is_anomaly", False)
+
+                            logger.debug(
+                                f"Tier 1 (IsolationForest) completed for log_id: {log_id}, "
+                                f"score: {tier1_score:.3f}, is_anomaly: {tier1_is_anomaly}"
+                            )
+
+                            # Tier 2: LLM validation if score exceeds threshold and flagged as anomaly
+                            if (
+                                settings.llm_validation_enabled
+                                and tier1_is_anomaly
+                                and tier1_score >= settings.anomaly_score_threshold
+                            ):
+                                # Get log entry for LLM context
+                                log_entry = db.query(LogEntry).filter(LogEntry.id == log_id).first()
+                                if log_entry:
+                                    # Get some context logs
+                                    context_logs = (
+                                        db.query(LogEntry)
+                                        .filter(LogEntry.id != log_id)
+                                        .order_by(LogEntry.timestamp.desc())
+                                        .limit(5)
+                                        .all()
+                                    )
+
+                                    context = [
+                                        {
+                                            "level": log.level,
+                                            "service": log.service,
+                                            "message": log.message,
+                                        }
+                                        for log in context_logs
+                                    ]
+
+                                    # Run LLM validation
+                                    llm_result = llm_reasoning_service.detect_anomaly(
+                                        log_message=log_entry.message,
+                                        log_level=log_entry.level,
+                                        log_service=log_entry.service,
+                                        context_logs=context,
+                                    )
+
+                                    # Get anomaly result
+                                    anomaly_result = (
+                                        db.query(AnomalyResult)
+                                        .filter(AnomalyResult.log_entry_id == log_id)
+                                        .first()
+                                    )
+
+                                    if anomaly_result:
+                                        if llm_result:
+                                            # LLM detection succeeded - use its results
+                                            llm_is_anomaly = llm_result["is_anomaly"]
+                                            llm_confidence = llm_result["confidence"]
+                                            llm_reasoning = llm_result["reasoning"]
+
+                                            # Store LLM validation results (includes reasoning)
+                                            anomaly_result.llm_reasoning = llm_reasoning
+
+                                            # Final decision: Both methods must agree for high confidence
+                                            # If LLM disagrees, reduce confidence but keep the flag
+                                            if (
+                                                llm_is_anomaly
+                                                and llm_confidence
+                                                >= settings.llm_validation_confidence_threshold
+                                            ):
+                                                # LLM confirms: High confidence anomaly
+                                                logger.info(
+                                                    f"LLM validated anomaly for log_id: {log_id} "
+                                                    f"(confidence: {llm_confidence:.2f})"
+                                                )
+                                            elif not llm_is_anomaly:
+                                                # LLM disagrees: May be false positive, but keep for review
+                                                logger.info(
+                                                    f"LLM did not confirm anomaly for log_id: {log_id} "
+                                                    f"(may be false positive, keeping for review)"
+                                                )
+                                        else:
+                                            # LLM detection failed - fallback to explanation-only
+                                            # This ensures explanations are ALWAYS generated for anomalies
+                                            logger.warning(
+                                                f"LLM detection failed for log_id: {log_id}, "
+                                                f"falling back to explanation-only mode"
+                                            )
+                                            explanation = llm_reasoning_service.analyze_anomaly(
+                                                log_message=log_entry.message,
+                                                log_level=log_entry.level,
+                                                log_service=log_entry.service,
+                                                context_logs=context,
+                                            )
+
+                                            if explanation:
+                                                # Store explanation even if detection failed
+                                                anomaly_result.llm_reasoning = explanation
+                                                logger.debug(
+                                                    f"Generated LLM explanation for log_id: {log_id} "
+                                                    f"(detection failed, explanation-only)"
+                                                )
+
+                                    db.commit()
+                        else:
+                            logger.debug(f"Tier 1 scoring returned no result for log_id: {log_id}")
+                    finally:
+                        db.close()
+                except Exception as e:
+                    # Don't fail the entire storage operation if scoring fails
+                    logger.warning(f"Real-time scoring failed for log_id: {log_id}: {e}")
             else:
                 logger.warning(f"Failed to store vector embedding for log_id: {log_id}")
         except BudgetExceededError as e:

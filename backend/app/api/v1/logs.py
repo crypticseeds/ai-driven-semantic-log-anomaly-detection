@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.db.postgres import AnomalyResult, ClusteringMetadata, LogEntry
 from app.db.session import get_db
 from app.observability.metrics import http_requests_total
+from app.services.anomaly_detection_service import anomaly_detection_service
 from app.services.clustering_service import clustering_service
 from app.services.embedding_service import BudgetExceededError, embedding_service
 from app.services.pii_service import pii_service
@@ -588,3 +589,154 @@ async def get_outliers(
             method="GET", endpoint="/api/v1/logs/clustering/outliers", status=500
         ).inc()
         raise HTTPException(status_code=500, detail=f"Error retrieving outliers: {str(e)}") from e
+
+
+@router.post("/anomaly-detection/isolation-forest")
+async def detect_anomalies_isolation_forest(
+    contamination: Annotated[
+        float, Query(ge=0.0, le=0.5, description="Expected proportion of anomalies")
+    ] = 0.1,
+    n_estimators: Annotated[int, Query(ge=10, description="Number of trees")] = 100,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Detect anomalies using IsolationForest algorithm.
+
+    Args:
+        contamination: Expected proportion of anomalies (0.0 to 0.5)
+        n_estimators: Number of trees in the forest
+        db: Database session
+
+    Returns:
+        JSON response with anomaly detection results
+    """
+    try:
+        result = anomaly_detection_service.detect_with_isolation_forest(
+            contamination=contamination,
+            n_estimators=n_estimators,
+            db=db,
+        )
+
+        http_requests_total.labels(
+            method="POST",
+            endpoint="/api/v1/logs/anomaly-detection/isolation-forest",
+            status=200,
+        ).inc()
+
+        return JSONResponse(content=result)
+
+    except Exception as e:
+        http_requests_total.labels(
+            method="POST",
+            endpoint="/api/v1/logs/anomaly-detection/isolation-forest",
+            status=500,
+        ).inc()
+        raise HTTPException(
+            status_code=500, detail=f"Error running IsolationForest: {str(e)}"
+        ) from e
+
+
+@router.post("/anomaly-detection/z-score")
+async def detect_anomalies_zscore(
+    threshold: Annotated[float, Query(ge=1.0, le=5.0, description="Z-score threshold")] = 3.0,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Detect anomalies using Z-score method.
+
+    Args:
+        threshold: Z-score threshold (default 3.0 = 3 standard deviations)
+        db: Database session
+
+    Returns:
+        JSON response with anomaly detection results
+    """
+    try:
+        result = anomaly_detection_service.detect_with_zscore(threshold=threshold, db=db)
+
+        http_requests_total.labels(
+            method="POST", endpoint="/api/v1/logs/anomaly-detection/z-score", status=200
+        ).inc()
+
+        return JSONResponse(content=result)
+
+    except Exception as e:
+        http_requests_total.labels(
+            method="POST", endpoint="/api/v1/logs/anomaly-detection/z-score", status=500
+        ).inc()
+        raise HTTPException(status_code=500, detail=f"Error running Z-score: {str(e)}") from e
+
+
+@router.post("/anomaly-detection/iqr")
+async def detect_anomalies_iqr(
+    multiplier: Annotated[float, Query(ge=0.5, le=3.0, description="IQR multiplier")] = 1.5,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Detect anomalies using Interquartile Range (IQR) method.
+
+    Args:
+        multiplier: IQR multiplier (default 1.5)
+        db: Database session
+
+    Returns:
+        JSON response with anomaly detection results
+    """
+    try:
+        result = anomaly_detection_service.detect_with_iqr(multiplier=multiplier, db=db)
+
+        http_requests_total.labels(
+            method="POST", endpoint="/api/v1/logs/anomaly-detection/iqr", status=200
+        ).inc()
+
+        return JSONResponse(content=result)
+
+    except Exception as e:
+        http_requests_total.labels(
+            method="POST", endpoint="/api/v1/logs/anomaly-detection/iqr", status=500
+        ).inc()
+        raise HTTPException(status_code=500, detail=f"Error running IQR: {str(e)}") from e
+
+
+@router.post("/anomaly-detection/score/{log_id}")
+async def score_log_entry(
+    log_id: UUID,
+    method: Annotated[
+        str, Query(description="Detection method: IsolationForest, Z-score, or IQR")
+    ] = "IsolationForest",
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Score a single log entry for anomaly detection (real-time scoring).
+
+    Args:
+        log_id: UUID of the log entry to score
+        method: Detection method to use (IsolationForest, Z-score, IQR)
+        db: Database session
+
+    Returns:
+        JSON response with anomaly score and is_anomaly flag
+    """
+    try:
+        if method not in ["IsolationForest", "Z-score", "IQR"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid method: {method}. Must be one of: IsolationForest, Z-score, IQR",
+            )
+
+        result = anomaly_detection_service.score_log_entry(log_id=log_id, method=method, db=db)
+
+        if result is None:
+            raise HTTPException(
+                status_code=404, detail=f"Log entry {log_id} not found or no embedding available"
+            )
+
+        http_requests_total.labels(
+            method="POST", endpoint="/api/v1/logs/anomaly-detection/score", status=200
+        ).inc()
+
+        return JSONResponse(content=result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        http_requests_total.labels(
+            method="POST", endpoint="/api/v1/logs/anomaly-detection/score", status=500
+        ).inc()
+        raise HTTPException(status_code=500, detail=f"Error scoring log entry: {str(e)}") from e

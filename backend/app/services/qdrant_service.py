@@ -338,6 +338,43 @@ class QdrantService:
             logger.error(f"Error retrieving embeddings: {e}", exc_info=True)
             return []
 
+    def get_vector(self, log_id: UUID) -> dict[str, Any] | None:
+        """Retrieve a single vector by log ID.
+
+        Args:
+            log_id: UUID of the log entry
+
+        Returns:
+            Dictionary with 'id', 'vector', and 'payload' or None if not found
+        """
+        if not self.client:
+            logger.error("Qdrant client not initialized.")
+            return None
+
+        if not self.ensure_collection():
+            return None
+
+        try:
+            result = self.client.retrieve(
+                collection_name=self.collection_name,
+                ids=[str(log_id)],
+                with_payload=True,
+                with_vectors=True,
+            )
+
+            if not result or len(result) == 0:
+                return None
+
+            point = result[0]
+            return {
+                "id": point.id,
+                "vector": point.vector if hasattr(point, "vector") else None,
+                "payload": point.payload or {},
+            }
+        except Exception as e:
+            logger.error(f"Error retrieving vector for log_id {log_id}: {e}", exc_info=True)
+            return None
+
     def _update_vector_store_size(self) -> None:
         """Update the vector_store_size metric."""
         try:

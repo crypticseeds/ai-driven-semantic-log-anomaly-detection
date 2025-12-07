@@ -4,7 +4,7 @@ Simple script to run all tests locally from the project root.
 Similar to CI workflow but excludes test_kafka_service.py (see DEV-41).
 
 This script runs all tests in backend/tests, which includes:
-- Unit tests: test_pii_service.py, test_qdrant_service.py, test_clustering_service.py, etc.
+- Unit tests: test_pii_service.py, test_qdrant_service.py, test_clustering_service.py, test_anomaly_detection_service.py, test_llm_reasoning_service.py, etc.
   (test_kafka_service.py excluded - see DEV-41)
 - Integration tests: test_ingestion_flow.py
 - Config tests: test_config.py
@@ -45,7 +45,7 @@ def run_tests():
 
     # Run pytest with verbose output
     # This includes all tests in backend/tests:
-    # - Unit tests: test_pii_service.py, test_qdrant_service.py, test_clustering_service.py, etc.
+    # - Unit tests: test_pii_service.py, test_qdrant_service.py, test_clustering_service.py, test_anomaly_detection_service.py, test_llm_reasoning_service.py, etc.
     #   (test_kafka_service.py excluded - see DEV-41)
     # - Integration tests: test_ingestion_flow.py
     # - Config tests: test_config.py

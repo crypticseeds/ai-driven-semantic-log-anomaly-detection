@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.postgres import AnomalyResult, ClusteringMetadata, LogEntry
 from app.db.session import get_db
+from app.services.llm_reasoning_service import llm_reasoning_service
 from app.services.qdrant_service import qdrant_service
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,9 @@ class ClusteringService:
             # Store cluster assignments in database
             self._store_cluster_assignments(cluster_assignments, db)
 
+            # Generate LLM reasoning for outliers
+            self._analyze_outliers_with_llm(cluster_assignments, db)
+
             # Calculate cluster metadata
             cluster_metadata = self._calculate_cluster_metadata(
                 cluster_labels, log_ids, vectors_array, db
@@ -208,6 +212,130 @@ class ClusteringService:
             logger.error(f"Error storing cluster assignments: {e}", exc_info=True)
             db.rollback()
             raise
+
+    def _analyze_outliers_with_llm(self, cluster_assignments: dict[str, int], db: Session) -> None:
+        """Generate LLM reasoning for outlier log entries.
+
+        Args:
+            cluster_assignments: Dict mapping log_id (str) to cluster_id (int)
+            db: Database session
+        """
+        try:
+            # Get all outliers (cluster_id = -1)
+            outlier_log_ids = [
+                UUID(log_id_str)
+                for log_id_str, cluster_id in cluster_assignments.items()
+                if cluster_id == -1
+            ]
+
+            if not outlier_log_ids:
+                logger.info("No outliers to analyze with LLM")
+                return
+
+            logger.info(f"Analyzing {len(outlier_log_ids)} outliers with LLM...")
+
+            # Get log entries for outliers
+            log_entries = db.query(LogEntry).filter(LogEntry.id.in_(outlier_log_ids)).all()
+            log_dict = {log.id: log for log in log_entries}
+
+            # Get some normal logs for context (from clusters)
+            normal_log_ids = [
+                UUID(log_id_str)
+                for log_id_str, cluster_id in cluster_assignments.items()
+                if cluster_id != -1
+            ][:10]  # Sample 10 normal logs for context
+            normal_logs = db.query(LogEntry).filter(LogEntry.id.in_(normal_log_ids)).all()
+
+            # Prepare context logs
+            context_logs = [
+                {
+                    "level": log.level,
+                    "service": log.service,
+                    "message": log.message,
+                }
+                for log in normal_logs
+            ]
+
+            # Validate each outlier with LLM (Tier 2 validation)
+            settings = get_settings()
+            validated_count = 0
+            confirmed_count = 0
+
+            for log_id in outlier_log_ids[:20]:  # Limit to 20 to control API costs
+                log_entry = log_dict.get(log_id)
+                if not log_entry:
+                    continue
+
+                # Run LLM detection (validation) and ensure explanation is always generated
+                llm_result = llm_reasoning_service.detect_anomaly(
+                    log_message=log_entry.message,
+                    log_level=log_entry.level,
+                    log_service=log_entry.service,
+                    context_logs=context_logs,
+                )
+
+                # Get or create anomaly result
+                anomaly_result = (
+                    db.query(AnomalyResult).filter(AnomalyResult.log_entry_id == log_id).first()
+                )
+
+                if anomaly_result:
+                    if llm_result:
+                        # LLM detection succeeded - use its results
+                        llm_is_anomaly = llm_result["is_anomaly"]
+                        llm_confidence = llm_result["confidence"]
+                        llm_reasoning = llm_result["reasoning"]
+
+                        # Store LLM validation results
+                        anomaly_result.llm_reasoning = llm_reasoning
+                        validated_count += 1
+
+                        # Check if LLM confirms the anomaly
+                        if (
+                            llm_is_anomaly
+                            and llm_confidence >= settings.llm_validation_confidence_threshold
+                        ):
+                            confirmed_count += 1
+                            logger.debug(
+                                f"LLM confirmed HDBSCAN outlier for log_id: {log_id} "
+                                f"(confidence: {llm_confidence:.2f})"
+                            )
+                        else:
+                            logger.debug(
+                                f"LLM did not confirm HDBSCAN outlier for log_id: {log_id} "
+                                f"(may be false positive)"
+                            )
+                    else:
+                        # LLM detection failed - fallback to explanation-only
+                        # This ensures explanations are ALWAYS generated for anomalies
+                        logger.warning(
+                            f"LLM detection failed for log_id: {log_id}, "
+                            f"falling back to explanation-only mode"
+                        )
+                        explanation = llm_reasoning_service.analyze_anomaly(
+                            log_message=log_entry.message,
+                            log_level=log_entry.level,
+                            log_service=log_entry.service,
+                            context_logs=context_logs,
+                        )
+
+                        if explanation:
+                            # Store explanation even if detection failed
+                            anomaly_result.llm_reasoning = explanation
+                            logger.debug(
+                                f"Generated LLM explanation for log_id: {log_id} "
+                                f"(detection failed, explanation-only)"
+                            )
+
+            db.commit()
+            logger.info(
+                f"LLM validation completed: {validated_count} outliers validated, "
+                f"{confirmed_count} confirmed as anomalies"
+            )
+
+        except Exception as e:
+            logger.error(f"Error analyzing outliers with LLM: {e}", exc_info=True)
+            db.rollback()
 
     def _calculate_cluster_metadata(
         self,

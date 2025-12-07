@@ -57,6 +57,18 @@ jobs:
           echo "=== Running Clustering Service Unit Tests ==="
           uv run python -m pytest backend/tests/unit/test_clustering_service.py -v --tb=short --durations=10
 
+      - name: Run Anomaly Detection Service Unit Tests (test_anomaly_detection_service.py)
+        timeout-minutes: 3
+        run: |
+          echo "=== Running Anomaly Detection Service Unit Tests ==="
+          uv run python -m pytest backend/tests/unit/test_anomaly_detection_service.py -v --tb=short --durations=10
+
+      - name: Run LLM Reasoning Service Unit Tests (test_llm_reasoning_service.py)
+        timeout-minutes: 3
+        run: |
+          echo "=== Running LLM Reasoning Service Unit Tests ==="
+          uv run python -m pytest backend/tests/unit/test_llm_reasoning_service.py -v --tb=short --durations=10
+
       # TODO: Fix Kafka Service Unit Tests - see Linear issue
       # - name: Run Unit Tests (test_kafka_service.py)
       #   timeout-minutes: 3
