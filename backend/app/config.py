@@ -66,6 +66,10 @@ class Settings(BaseSettings):
         default=None,
         description="Qdrant Cloud API key",
     )
+    qdrant_collection: str = Field(
+        default="log_embeddings",
+        description="Qdrant collection name for log embeddings",
+    )
 
     # Langfuse
     langfuse_secret_key: str | None = Field(

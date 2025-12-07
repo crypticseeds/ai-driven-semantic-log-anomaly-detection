@@ -21,6 +21,7 @@ from app.observability.otel import (
 )
 from app.services.ingestion_service import ingestion_service
 from app.services.kafka_service import kafka_service
+from app.services.qdrant_service import qdrant_service
 
 settings = get_settings()
 
@@ -52,6 +53,9 @@ async def lifespan(_app: FastAPI):
 
     # Create database tables
     Base.metadata.create_all(bind=engine)
+
+    # Initialize Qdrant collection
+    qdrant_service.ensure_collection()
 
     # Start ingestion service
     ingestion_task = asyncio.create_task(ingestion_service.start_consuming())

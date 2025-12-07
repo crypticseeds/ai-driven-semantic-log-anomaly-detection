@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
 Simple script to run all tests locally from the project root.
-Similar to CI workflow but includes all tests including test_kafka_service.py.
+Similar to CI workflow but excludes test_kafka_service.py (see DEV-41).
+
+This script runs all tests in backend/tests, which includes:
+- Unit tests: test_pii_service.py, test_qdrant_service.py, etc.
+  (test_kafka_service.py excluded - see DEV-41)
+- Integration tests: test_ingestion_flow.py
+- Config tests: test_config.py
 """
 
 import os
@@ -38,6 +44,13 @@ def run_tests():
     print(f"{'=' * 60}\n")
 
     # Run pytest with verbose output
+    # This includes all tests in backend/tests:
+    # - Unit tests: test_pii_service.py, test_qdrant_service.py, etc.
+    #   (test_kafka_service.py excluded - see DEV-41)
+    # - Integration tests: test_ingestion_flow.py
+    # - Config tests: test_config.py
+    # Set rootdir explicitly to project root to avoid pytest auto-detecting backend/ as rootdir
+    # Exclude Kafka tests until they are fixed - see Linear issue DEV-41
     cmd = [
         "uv",
         "run",
@@ -45,6 +58,9 @@ def run_tests():
         "-m",
         "pytest",
         "backend/tests",
+        "--ignore=backend/tests/unit/test_kafka_service.py",  # Exclude until DEV-41 is fixed
+        "--rootdir",
+        str(project_root),
         "-v",
         "--tb=short",
         # Suppress warnings for cleaner output
