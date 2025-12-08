@@ -124,7 +124,7 @@ Once the services are running, you can access them at the following endpoints:
 | Service | Port | Web UI? | URL / Access |
 |---------|------|---------|--------------|
 | **FastAPI Backend** | 8000 | ✅ Yes | http://localhost:8000/docs |
-| **Grafana** | 3001 | ✅ Yes | http://localhost:3001 (admin/admin) |
+| **Grafana** | 3000 | ✅ Yes | http://localhost:3000 (admin/admin) |
 | **Prometheus** | 9090 | ✅ Yes | http://localhost:9090 |
 | **Tempo** | 3200 | ❌ API only | `curl http://localhost:3200/ready` |
 | **Kafka** | 9092 | ❌ Binary protocol | Use CLI (see below) |
