@@ -153,8 +153,70 @@ class TestAgentEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "tools" in data
-        assert len(data["tools"]) == 3
+        assert len(data["tools"]) == 5  # Updated to include new tools
         tool_names = [tool["name"] for tool in data["tools"]]
         assert "analyze_anomaly_tool" in tool_names
         assert "detect_anomaly_tool" in tool_names
         assert "analyze_anomaly_with_cluster_context" in tool_names
+        assert "search_logs" in tool_names
+        assert "summarize_range" in tool_names
+
+    @patch("app.api.v1.agent.agent_executor_service")
+    def test_root_cause_analysis_endpoint(self, mock_service):
+        """Test POST /api/v1/agent/rca endpoint."""
+        # Mock agent executor service
+        mock_service.is_available.return_value = True
+        mock_service.analyze_root_cause.return_value = {
+            "response": "Based on the analysis, the root cause appears to be...",
+            "intermediate_steps": [],
+            "query": "What caused the errors?",
+        }
+
+        response = client.post(
+            "/api/v1/agent/rca",
+            params={"query": "What caused the errors?"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "response" in data
+        assert "query" in data
+        assert data["query"] == "What caused the errors?"
+
+    @patch("app.api.v1.agent.agent_executor_service")
+    def test_root_cause_analysis_endpoint_unavailable(self, mock_service):
+        """Test POST /api/v1/agent/rca endpoint when agent executor is unavailable."""
+        mock_service.is_available.return_value = False
+
+        response = client.post(
+            "/api/v1/agent/rca",
+            params={"query": "What caused the errors?"},
+        )
+
+        assert response.status_code == 503
+        data = response.json()
+        assert "detail" in data
+        assert "not available" in data["detail"].lower()
+
+    @patch("app.api.v1.agent.agent_executor_service")
+    def test_root_cause_analysis_with_context(self, mock_service):
+        """Test POST /api/v1/agent/rca endpoint with context."""
+        mock_service.is_available.return_value = True
+        mock_service.analyze_root_cause.return_value = {
+            "response": "Analysis with context",
+            "intermediate_steps": [],
+            "query": "Analyze errors",
+        }
+
+        import json
+
+        context = json.dumps({"service": "auth-service", "time_range": "last_hour"})
+
+        response = client.post(
+            "/api/v1/agent/rca",
+            params={"query": "Analyze errors", "context": context},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "response" in data

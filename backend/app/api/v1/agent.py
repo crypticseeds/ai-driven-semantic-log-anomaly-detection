@@ -11,10 +11,13 @@ from sqlalchemy.orm import Session
 from app.db.postgres import AnomalyResult, LogEntry
 from app.db.session import get_db
 from app.observability.metrics import http_requests_total
+from app.services.agent_executor_service import agent_executor_service
 from app.services.agent_tools import (
     analyze_anomaly_tool,
     analyze_anomaly_with_cluster_context,
     detect_anomaly_tool,
+    search_logs,
+    summarize_range,
 )
 
 logger = logging.getLogger(__name__)
@@ -244,6 +247,69 @@ async def agent_detect_anomaly(
         raise HTTPException(status_code=500, detail=f"Error detecting anomaly: {str(e)}") from e
 
 
+@router.post("/rca")
+async def root_cause_analysis(
+    query: Annotated[str, Query(description="Natural language query for root cause analysis")],
+    context: Annotated[str | None, Query(description="Optional JSON context as string")] = None,
+) -> JSONResponse:
+    """Perform root cause analysis using the agent executor.
+
+    This endpoint uses a LangChain agent executor to perform comprehensive
+    root cause analysis. The agent can search logs, analyze anomalies,
+    summarize time ranges, and provide detailed insights.
+
+    Args:
+        query: Natural language query describing what to analyze
+            Examples:
+            - "What caused the database connection errors yesterday?"
+            - "Analyze the spike in ERROR logs between 10am and 12pm"
+            - "Find the root cause of authentication failures in the auth service"
+        context: Optional JSON string with additional context
+
+    Returns:
+        JSON response with agent analysis results
+    """
+    try:
+        if not agent_executor_service.is_available():
+            http_requests_total.labels(
+                method="POST", endpoint="/api/v1/agent/rca", status=503
+            ).inc()
+            raise HTTPException(
+                status_code=503,
+                detail="Agent executor not available. Check OpenAI API key configuration.",
+            )
+
+        # Parse context if provided
+        context_dict = None
+        if context:
+            import json
+
+            try:
+                context_dict = json.loads(context)
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON context provided: {context}")
+
+        # Execute agent
+        result = agent_executor_service.analyze_root_cause(query=query, context=context_dict)
+
+        if "error" in result:
+            http_requests_total.labels(
+                method="POST", endpoint="/api/v1/agent/rca", status=500
+            ).inc()
+            raise HTTPException(status_code=500, detail=result["error"])
+
+        http_requests_total.labels(method="POST", endpoint="/api/v1/agent/rca", status=200).inc()
+
+        return JSONResponse(content=result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        http_requests_total.labels(method="POST", endpoint="/api/v1/agent/rca", status=500).inc()
+        logger.error(f"Error in root cause analysis: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error performing RCA: {str(e)}") from e
+
+
 @router.get("/tools")
 async def list_agent_tools() -> JSONResponse:
     """List available agent tools.
@@ -280,6 +346,30 @@ async def list_agent_tools() -> JSONResponse:
                     "cluster_id": "int - The cluster ID to compare against",
                     "log_level": "str | None - Optional log level",
                     "log_service": "str | None - Optional service name",
+                },
+            },
+            {
+                "name": "search_logs",
+                "description": search_logs.description,
+                "parameters": {
+                    "query": "str | None - Text search query",
+                    "level": "str | None - Filter by log level",
+                    "service": "str | None - Filter by service name",
+                    "start_time": "str | None - Start time in ISO format",
+                    "end_time": "str | None - End time in ISO format",
+                    "limit": "int - Maximum number of results (default: 50)",
+                    "use_semantic_search": "bool - Use semantic search",
+                },
+            },
+            {
+                "name": "summarize_range",
+                "description": summarize_range.description,
+                "parameters": {
+                    "start_time": "str - Start time in ISO format",
+                    "end_time": "str - End time in ISO format",
+                    "service": "str | None - Optional filter by service",
+                    "level": "str | None - Optional filter by level",
+                    "max_logs": "int - Maximum logs to analyze (default: 100)",
                 },
             },
         ]
