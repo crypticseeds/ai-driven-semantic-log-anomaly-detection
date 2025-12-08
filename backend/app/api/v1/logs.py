@@ -516,6 +516,53 @@ async def get_cluster(
         raise HTTPException(status_code=500, detail=f"Error retrieving cluster: {str(e)}") from e
 
 
+@router.get("/clustering/clusters/by-log/{log_id}")
+async def get_cluster_by_log_id(
+    log_id: UUID,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Get cluster information for a specific log entry by its log_id.
+
+    Args:
+        log_id: UUID of the log entry
+        db: Database session
+
+    Returns:
+        JSON response with cluster information for the log entry
+    """
+    try:
+        cluster_info = clustering_service.get_cluster_info_by_log_id(log_id, db)
+
+        if not cluster_info:
+            http_requests_total.labels(
+                method="GET",
+                endpoint="/api/v1/logs/clustering/clusters/by-log/{log_id}",
+                status=404,
+            ).inc()
+            raise HTTPException(
+                status_code=404,
+                detail=f"Log entry {log_id} not found or not assigned to a cluster",
+            )
+
+        http_requests_total.labels(
+            method="GET", endpoint="/api/v1/logs/clustering/clusters/by-log/{log_id}", status=200
+        ).inc()
+
+        return JSONResponse(content=cluster_info)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        http_requests_total.labels(
+            method="GET",
+            endpoint="/api/v1/logs/clustering/clusters/by-log/{log_id}",
+            status=500,
+        ).inc()
+        raise HTTPException(
+            status_code=500, detail=f"Error retrieving cluster for log: {str(e)}"
+        ) from e
+
+
 @router.get("/clustering/outliers")
 async def get_outliers(
     limit: Annotated[int, Query(ge=1, le=1000, description="Maximum number of outliers")] = 100,

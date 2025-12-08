@@ -75,6 +75,12 @@ jobs:
           echo "=== Running Agent Tools Unit Tests ==="
           uv run python -m pytest backend/tests/unit/test_agent_tools.py -v --tb=short --durations=10
 
+      - name: Run Agent Executor Service Unit Tests (test_agent_executor_service.py)
+        timeout-minutes: 3
+        run: |
+          echo "=== Running Agent Executor Service Unit Tests ==="
+          uv run python -m pytest backend/tests/unit/test_agent_executor_service.py -v --tb=short --durations=10
+
       # TODO: Fix Kafka Service Unit Tests - see Linear issue
       # - name: Run Unit Tests (test_kafka_service.py)
       #   timeout-minutes: 3

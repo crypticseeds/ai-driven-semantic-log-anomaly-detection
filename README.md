@@ -177,6 +177,14 @@ The agent API endpoints provide programmatic access to LLM reasoning capabilitie
   - Lists all available agent tools with descriptions and parameters
   - Returns: JSON array of tool definitions
 
+### API Testing
+
+**Postman Collection**: A complete Postman collection with all API endpoints is available in the `postman/` directory. See [postman/README.md](postman/README.md) for setup instructions.
+
+**Manual Testing Guide**: See [API_TESTING_GUIDE.md](API_TESTING_GUIDE.md) for detailed curl commands and testing instructions.
+
+**Automated Testing**: Run `python backend/scripts/test_all_endpoints.py` to automatically test all endpoints.
+
 ### Programmatic Access
 
 #### Kafka (Message Broker)

@@ -1,11 +1,17 @@
 """LangChain tool wrappers for LLM reasoning service."""
 
 import logging
+from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from langchain_core.tools import tool
+from sqlalchemy import and_
 
+from app.db.postgres import LogEntry
+from app.db.session import get_db
 from app.services.clustering_service import clustering_service
+from app.services.embedding_service import embedding_service
 from app.services.llm_reasoning_service import llm_reasoning_service
 from app.services.qdrant_service import qdrant_service
 
@@ -269,6 +275,275 @@ def analyze_anomaly_with_cluster_context(
         }
 
 
+@tool
+def search_logs(
+    query: str | None = None,
+    level: str | None = None,
+    service: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    limit: int = 50,
+    use_semantic_search: bool = False,
+) -> dict[str, Any]:
+    """Search logs with optional filters and semantic search support.
+
+    This tool searches log entries from the database with various filters.
+    Can use semantic search for finding similar logs by meaning.
+
+    Args:
+        query: Text search query (searches in log message)
+        level: Filter by log level (INFO, ERROR, WARN, etc.)
+        service: Filter by service name
+        start_time: Start time in ISO format (e.g., 2024-01-15T10:30:00)
+        end_time: End time in ISO format
+        limit: Maximum number of results (default: 50, max: 100)
+        use_semantic_search: Use semantic search instead of text search
+
+    Returns:
+        Dictionary with search results including logs and metadata
+    """
+    try:
+        # Limit to reasonable maximum
+        limit = min(limit, 100)
+
+        db = next(get_db())
+        try:
+            # Use semantic search if requested and query is provided
+            if use_semantic_search and query:
+                try:
+                    embedding_result = embedding_service.generate_embedding(query)
+                    if embedding_result and embedding_result.get("embedding"):
+                        query_embedding = embedding_result["embedding"]
+                        similar_logs = qdrant_service.search_vectors(
+                            query_embedding=query_embedding,
+                            limit=limit,
+                        )
+
+                        # Get log entries from database
+                        log_ids = [UUID(log["id"]) for log in similar_logs]
+                        entries = db.query(LogEntry).filter(LogEntry.id.in_(log_ids)).all()
+
+                        results = []
+                        for entry in entries:
+                            results.append(
+                                {
+                                    "id": str(entry.id),
+                                    "timestamp": entry.timestamp.isoformat(),
+                                    "level": entry.level,
+                                    "service": entry.service,
+                                    "message": entry.message[:200],  # Truncate for tool output
+                                }
+                            )
+
+                        return {
+                            "results": results,
+                            "total": len(results),
+                            "search_type": "semantic",
+                        }
+                except Exception as e:
+                    logger.warning(f"Semantic search failed, falling back to text search: {e}")
+
+            # Traditional text-based search
+            filters = []
+
+            if level:
+                filters.append(LogEntry.level == level.upper())
+
+            if service:
+                filters.append(LogEntry.service.ilike(f"%{service}%"))
+
+            if start_time:
+                try:
+                    start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    filters.append(LogEntry.timestamp >= start_dt)
+                except ValueError:
+                    logger.warning(f"Invalid start_time format: {start_time}")
+
+            if end_time:
+                try:
+                    end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                    filters.append(LogEntry.timestamp <= end_dt)
+                except ValueError:
+                    logger.warning(f"Invalid end_time format: {end_time}")
+
+            if query:
+                filters.append(LogEntry.message.ilike(f"%{query}%"))
+
+            # Execute query
+            db_query = db.query(LogEntry)
+            if filters:
+                db_query = db_query.filter(and_(*filters))
+
+            db_query = db_query.order_by(LogEntry.timestamp.desc())
+            entries = db_query.limit(limit).all()
+
+            results = []
+            for entry in entries:
+                results.append(
+                    {
+                        "id": str(entry.id),
+                        "timestamp": entry.timestamp.isoformat(),
+                        "level": entry.level,
+                        "service": entry.service,
+                        "message": entry.message[:200],  # Truncate for tool output
+                    }
+                )
+
+            return {
+                "results": results,
+                "total": len(results),
+                "search_type": "text",
+            }
+        finally:
+            db.close()
+
+    except Exception as e:
+        logger.error(f"Error in search_logs tool: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "results": [],
+            "total": 0,
+            "search_type": "error",
+        }
+
+
+@tool
+def summarize_range(
+    start_time: str,
+    end_time: str,
+    service: str | None = None,
+    level: str | None = None,
+    max_logs: int = 100,
+) -> dict[str, Any]:
+    """Summarize logs within a time range with aggregation and analysis.
+
+    This tool retrieves logs within a specified time range and provides
+    a summary including counts by level, service, and common patterns.
+
+    Args:
+        start_time: Start time in ISO format (e.g., 2024-01-15T10:30:00)
+        end_time: End time in ISO format
+        service: Optional filter by service name
+        level: Optional filter by log level
+        max_logs: Maximum number of logs to analyze for summary (default: 100)
+
+    Returns:
+        Dictionary with summary statistics and analysis
+    """
+    try:
+        db = next(get_db())
+        try:
+            # Parse time range
+            try:
+                start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            except ValueError as e:
+                return {
+                    "error": f"Invalid time format: {e}",
+                    "summary": {},
+                }
+
+            # Build filters
+            filters = [
+                LogEntry.timestamp >= start_dt,
+                LogEntry.timestamp <= end_dt,
+            ]
+
+            if service:
+                filters.append(LogEntry.service.ilike(f"%{service}%"))
+
+            if level:
+                filters.append(LogEntry.level == level.upper())
+
+            # Query logs
+            entries = (
+                db.query(LogEntry)
+                .filter(and_(*filters))
+                .order_by(LogEntry.timestamp.desc())
+                .limit(max_logs)
+                .all()
+            )
+
+            if not entries:
+                return {
+                    "summary": {
+                        "total_logs": 0,
+                        "time_range": {
+                            "start": start_time,
+                            "end": end_time,
+                        },
+                        "message": "No logs found in specified time range",
+                    },
+                }
+
+            # Aggregate statistics
+            level_counts = {}
+            service_counts = {}
+            error_count = 0
+            warning_count = 0
+
+            for entry in entries:
+                # Count by level
+                level_counts[entry.level] = level_counts.get(entry.level, 0) + 1
+                if entry.level == "ERROR":
+                    error_count += 1
+                elif entry.level == "WARN":
+                    warning_count += 1
+
+                # Count by service
+                service_counts[entry.service] = service_counts.get(entry.service, 0) + 1
+
+            # Find common error patterns (simple keyword extraction)
+            error_messages = [e.message.lower()[:100] for e in entries if e.level == "ERROR"]
+            common_patterns = []
+            if error_messages:
+                # Simple pattern detection (can be enhanced)
+                word_freq = {}
+                for msg in error_messages:
+                    words = msg.split()[:10]  # First 10 words
+                    for word in words:
+                        if len(word) > 4:  # Skip short words
+                            word_freq[word] = word_freq.get(word, 0) + 1
+
+                # Get top 5 most common words
+                sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:5]
+                common_patterns = [word for word, _ in sorted_words]
+
+            summary = {
+                "total_logs": len(entries),
+                "time_range": {
+                    "start": start_time,
+                    "end": end_time,
+                },
+                "level_distribution": level_counts,
+                "service_distribution": dict(list(service_counts.items())[:10]),  # Top 10 services
+                "error_count": error_count,
+                "warning_count": warning_count,
+                "common_error_patterns": common_patterns,
+                "sample_logs": [
+                    {
+                        "timestamp": e.timestamp.isoformat(),
+                        "level": e.level,
+                        "service": e.service,
+                        "message": e.message[:150],
+                    }
+                    for e in entries[:5]  # First 5 logs as samples
+                ],
+            }
+
+            return {"summary": summary}
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        logger.error(f"Error in summarize_range tool: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "summary": {},
+        }
+
+
 def get_agent_tools() -> list:
     """Get list of LangChain tools for agent executor.
 
@@ -279,4 +554,6 @@ def get_agent_tools() -> list:
         analyze_anomaly_tool,
         detect_anomaly_tool,
         analyze_anomaly_with_cluster_context,
+        search_logs,
+        summarize_range,
     ]
