@@ -1,5 +1,6 @@
 """Unit tests for LLM reasoning service."""
 
+import json
 import os
 from unittest.mock import MagicMock, patch
 
@@ -118,3 +119,89 @@ class TestLLMReasoningService:
             assert len(results) == 2
             assert "1" in results
             assert "2" in results
+
+    @patch("app.services.llm_reasoning_service.OpenAI")
+    def test_analyze_anomaly_with_root_cause(self, mock_openai_class):
+        """Test root cause analysis with structured output."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_message = MagicMock()
+        mock_message.content = json.dumps(
+            {
+                "explanation": "This log indicates a database connection issue",
+                "root_causes": [
+                    {
+                        "hypothesis": "Connection pool exhaustion",
+                        "confidence": 0.8,
+                        "description": "All connections are in use",
+                    }
+                ],
+                "remediation_steps": [
+                    {
+                        "step": "Check connection pool size",
+                        "priority": "HIGH",
+                        "description": "Increase pool size or check for connection leaks",
+                    }
+                ],
+                "severity": "HIGH",
+                "severity_reason": "Database connectivity issues can cause service outages",
+            }
+        )
+        mock_choice.message = mock_message
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        get_settings.cache_clear()
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+            service = LLMReasoningService()
+            cluster_info = {
+                "cluster_id": 1,
+                "cluster_size": 100,
+                "sample_logs": [
+                    {"level": "INFO", "message": "Normal log 1"},
+                    {"level": "INFO", "message": "Normal log 2"},
+                ],
+            }
+            result = service.analyze_anomaly_with_root_cause(
+                log_message="Error: Database connection failed",
+                log_level="ERROR",
+                log_service="database",
+                cluster_info=cluster_info,
+            )
+
+            assert result is not None
+            assert "explanation" in result
+            assert "root_causes" in result
+            assert "remediation_steps" in result
+            assert "severity" in result
+            assert len(result["root_causes"]) > 0
+            assert len(result["remediation_steps"]) > 0
+            mock_client.chat.completions.create.assert_called_once()
+
+    @patch("app.services.llm_reasoning_service.OpenAI")
+    def test_analyze_anomaly_with_root_cause_json_error_fallback(self, mock_openai_class):
+        """Test root cause analysis falls back on JSON parse error."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_message = MagicMock()
+        mock_message.content = "Invalid JSON response"
+        mock_choice.message = mock_message
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        get_settings.cache_clear()
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+            service = LLMReasoningService()
+            # Mock analyze_anomaly to return a fallback explanation
+            with patch.object(service, "analyze_anomaly", return_value="Fallback explanation"):
+                result = service.analyze_anomaly_with_root_cause(
+                    log_message="Error: Database connection failed",
+                )
+
+                assert result is not None
+                assert result["explanation"] == "Fallback explanation"
+                assert result["severity"] == "MEDIUM"
