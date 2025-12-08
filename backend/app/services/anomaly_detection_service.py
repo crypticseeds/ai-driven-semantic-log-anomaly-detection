@@ -363,8 +363,11 @@ class AnomalyDetectionService:
         Returns:
             Dictionary with anomaly score and is_anomaly flag, or None if error
         """
+        # Track if we created the session ourselves
+        created_session = False
         if db is None:
             db = next(get_db())
+            created_session = True
 
         try:
             # Get embedding for this log
@@ -391,7 +394,7 @@ class AnomalyDetectionService:
                 all_vectors_with_new = np.vstack([all_vectors, vector.reshape(1, -1)])
                 predictions = isolation_forest.fit_predict(all_vectors_with_new)
                 score = isolation_forest.score_samples(vector.reshape(1, -1))[0]
-                is_anomaly = predictions[-1] == -1
+                is_anomaly = bool(predictions[-1] == -1)
                 normalized_score = -score
 
             elif method == "Z-score":
@@ -403,7 +406,7 @@ class AnomalyDetectionService:
                     return None
                 z_score = abs((distance - mean_distance) / std_distance)
                 normalized_score = z_score
-                is_anomaly = z_score > 3.0
+                is_anomaly = bool(z_score > 3.0)
 
             elif method == "IQR":
                 centroid = np.mean(all_vectors, axis=0)
@@ -416,7 +419,7 @@ class AnomalyDetectionService:
                     return None
                 lower_bound = q1 - 1.5 * iqr
                 upper_bound = q3 + 1.5 * iqr
-                is_anomaly = distance < lower_bound or distance > upper_bound
+                is_anomaly = bool(distance < lower_bound or distance > upper_bound)
                 if distance < lower_bound:
                     normalized_score = (lower_bound - distance) / iqr
                 elif distance > upper_bound:
@@ -459,7 +462,9 @@ class AnomalyDetectionService:
                 db.rollback()
             return None
         finally:
-            if db:
+            # Only close the session if we created it ourselves
+            # If it was passed from FastAPI dependency injection, let FastAPI manage it
+            if created_session and db:
                 db.close()
 
 

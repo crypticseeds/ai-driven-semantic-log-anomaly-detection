@@ -48,8 +48,11 @@ class ClusteringService:
             - cluster_assignments: Dict mapping log_id to cluster_id
             - cluster_metadata: Dict with cluster statistics
         """
+        # Track if we created the session ourselves
+        created_session = False
         if db is None:
             db = next(get_db())
+            created_session = True
 
         try:
             # Get configuration
@@ -107,14 +110,19 @@ class ClusteringService:
                 log_ids = [log_ids[i] for i in indices]
 
             # Configure and run HDBSCAN
-            clusterer = HDBSCAN(
-                min_cluster_size=min_cluster_size,
-                min_samples=min_samples,
-                cluster_selection_epsilon=self.settings.hdbscan_cluster_selection_epsilon,
-                max_cluster_size=self.settings.hdbscan_max_cluster_size,
-                metric="euclidean",
-                cluster_selection_method="eom",
-            )
+            # Build parameters dict, only including max_cluster_size if it's not None
+            hdbscan_params = {
+                "min_cluster_size": min_cluster_size,
+                "min_samples": min_samples,
+                "cluster_selection_epsilon": self.settings.hdbscan_cluster_selection_epsilon,
+                "metric": "euclidean",
+                "cluster_selection_method": "eom",
+            }
+            # Only add max_cluster_size if it's not None (HDBSCAN handles None as default)
+            if self.settings.hdbscan_max_cluster_size is not None:
+                hdbscan_params["max_cluster_size"] = self.settings.hdbscan_max_cluster_size
+
+            clusterer = HDBSCAN(**hdbscan_params)
 
             cluster_labels = clusterer.fit_predict(vectors_array)
 
@@ -164,7 +172,9 @@ class ClusteringService:
                 "error": str(e),
             }
         finally:
-            if db:
+            # Only close the session if we created it ourselves
+            # If it was passed from FastAPI dependency injection, let FastAPI manage it
+            if created_session and db:
                 db.close()
 
     def _store_cluster_assignments(self, cluster_assignments: dict[str, int], db: Session) -> None:
@@ -548,6 +558,90 @@ class ClusteringService:
             return None
         finally:
             if db:
+                db.close()
+
+    def get_cluster_info_by_log_id(
+        self, log_id: UUID, db: Session | None = None
+    ) -> dict[str, Any] | None:
+        """Get cluster information for a specific log entry.
+
+        Args:
+            log_id: UUID of the log entry
+            db: Optional database session
+
+        Returns:
+            Dictionary with cluster information or None if log not found or not in a cluster
+        """
+        # Track if we created the session ourselves
+        created_session = False
+        if db is None:
+            db = next(get_db())
+            created_session = True
+
+        try:
+            # Get the anomaly result for this log to find its cluster_id
+            anomaly_result = (
+                db.query(AnomalyResult).filter(AnomalyResult.log_entry_id == log_id).first()
+            )
+
+            if not anomaly_result or anomaly_result.cluster_id is None:
+                return None
+
+            # If it's an outlier (cluster_id = -1), return special response
+            if anomaly_result.cluster_id == -1:
+                return {
+                    "cluster_id": -1,
+                    "cluster_size": 0,
+                    "is_outlier": True,
+                    "message": "This log is an outlier and does not belong to any cluster",
+                }
+
+            # Get cluster metadata using the same session
+            cluster_id = anomaly_result.cluster_id
+            metadata = (
+                db.query(ClusteringMetadata)
+                .filter(ClusteringMetadata.cluster_id == cluster_id)
+                .first()
+            )
+
+            if not metadata:
+                return None
+
+            # Get log entries in this cluster
+            anomaly_results = (
+                db.query(AnomalyResult).filter(AnomalyResult.cluster_id == cluster_id).all()
+            )
+
+            log_entries = (
+                db.query(LogEntry)
+                .filter(LogEntry.id.in_([ar.log_entry_id for ar in anomaly_results]))
+                .limit(100)
+                .all()
+            )
+
+            return {
+                "cluster_id": metadata.cluster_id,
+                "cluster_size": metadata.cluster_size,
+                "centroid": metadata.cluster_centroid,
+                "representative_logs": metadata.representative_logs,
+                "sample_logs": [
+                    {
+                        "id": str(log.id),
+                        "message": log.message,
+                        "level": log.level,
+                        "service": log.service,
+                        "timestamp": log.timestamp.isoformat(),
+                    }
+                    for log in log_entries
+                ],
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting cluster info by log_id: {e}", exc_info=True)
+            return None
+        finally:
+            # Only close the session if we created it ourselves
+            if created_session and db:
                 db.close()
 
 

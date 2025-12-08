@@ -269,3 +269,6 @@ OPENAI_EMBEDDING_INTEGRATION_GUIDE.md
 docs/presidio-configuration.md
 verification_guide.md
 API_TESTING_GUIDE.md
+
+# Postman
+postman/
