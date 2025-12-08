@@ -143,12 +143,16 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = Field(
-        default="AI Log Analytics",
+        default="AI Driven Semantic Log Anomaly Detection",
         description="Application name",
     )
     app_version: str = Field(
         default="0.1.0",
         description="Application version",
+    )
+    developer_name: str = Field(
+        default="Femi Akinlotan",
+        description="Developer name for API attribution",
     )
     debug: bool = Field(
         default=False,
