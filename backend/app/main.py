@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
 
+from app.api.v1.agent import router as agent_router
 from app.api.v1.logs import router as logs_router
 from app.config import get_settings
 from app.db.postgres import Base
@@ -85,6 +86,7 @@ app.mount("/metrics", metrics_app)
 
 # Include API routers
 app.include_router(logs_router)
+app.include_router(agent_router)
 
 
 @app.get("/health")

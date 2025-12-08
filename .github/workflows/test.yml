@@ -69,6 +69,12 @@ jobs:
           echo "=== Running LLM Reasoning Service Unit Tests ==="
           uv run python -m pytest backend/tests/unit/test_llm_reasoning_service.py -v --tb=short --durations=10
 
+      - name: Run Agent Tools Unit Tests (test_agent_tools.py)
+        timeout-minutes: 3
+        run: |
+          echo "=== Running Agent Tools Unit Tests ==="
+          uv run python -m pytest backend/tests/unit/test_agent_tools.py -v --tb=short --durations=10
+
       # TODO: Fix Kafka Service Unit Tests - see Linear issue
       # - name: Run Unit Tests (test_kafka_service.py)
       #   timeout-minutes: 3
@@ -81,6 +87,12 @@ jobs:
         run: |
           echo "=== Running Ingestion Flow Integration Tests ==="
           uv run python -m pytest backend/tests/integration/test_ingestion_flow.py -v --tb=short --durations=10
+
+      - name: Run Agent Endpoints Integration Tests (test_agent_endpoints.py)
+        timeout-minutes: 3
+        run: |
+          echo "=== Running Agent Endpoints Integration Tests ==="
+          uv run python -m pytest backend/tests/integration/test_agent_endpoints.py -v --tb=short --durations=10
 
       - name: Generate Coverage Report (All Tests)
         timeout-minutes: 10

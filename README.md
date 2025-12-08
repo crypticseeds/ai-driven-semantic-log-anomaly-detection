@@ -124,7 +124,7 @@ Once the services are running, you can access them at the following endpoints:
 | Service | Port | Web UI? | URL / Access |
 |---------|------|---------|--------------|
 | **FastAPI Backend** | 8000 | ✅ Yes | http://localhost:8000/docs |
-| **Grafana** | 3001 | ✅ Yes | http://localhost:3001 (admin/admin) |
+| **Grafana** | 3000 | ✅ Yes | http://localhost:3000 (admin/admin) |
 | **Prometheus** | 9090 | ✅ Yes | http://localhost:9090 |
 | **Tempo** | 3200 | ❌ API only | `curl http://localhost:3200/ready` |
 | **Kafka** | 9092 | ❌ Binary protocol | Use CLI (see below) |
@@ -148,6 +148,34 @@ Once the services are running, you can access them at the following endpoints:
 - **Detect Anomalies (Z-score)**: `POST http://localhost:8000/api/v1/logs/anomaly-detection/z-score`
 - **Detect Anomalies (IQR)**: `POST http://localhost:8000/api/v1/logs/anomaly-detection/iqr`
 - **Score Log Entry**: `POST http://localhost:8000/api/v1/logs/anomaly-detection/score/{log_id}`
+
+#### Agent API Endpoints (LangChain Tools)
+
+The agent API endpoints provide programmatic access to LLM reasoning capabilities through LangChain tool wrappers. These endpoints enable integration with agent executors and provide enhanced root cause analysis.
+
+- **Analyze Anomaly**: `POST http://localhost:8000/api/v1/agent/analyze-anomaly`
+  - Analyzes a log message with optional root cause analysis
+  - Parameters: `log_message` (required), `log_level`, `log_service`, `include_root_cause` (default: true)
+  - Returns: Structured analysis with explanation, root causes, remediation steps, and severity
+
+- **Analyze Anomaly by ID**: `POST http://localhost:8000/api/v1/agent/analyze-anomaly/{log_id}`
+  - Analyzes a specific log entry by UUID with optional cluster context
+  - Parameters: `include_root_cause` (default: true), `use_cluster_context` (default: true)
+  - Returns: Enhanced analysis with cluster comparison if available
+
+- **Detect Anomaly**: `POST http://localhost:8000/api/v1/agent/detect-anomaly`
+  - Detects if a log entry is anomalous using LLM classification
+  - Parameters: `log_message` (required), `log_level`, `log_service`
+  - Returns: Detection result with `is_anomaly`, `confidence`, and `reasoning`
+
+- **Stream Analysis**: `POST http://localhost:8000/api/v1/agent/analyze-anomaly/stream`
+  - Streaming endpoint for real-time analysis results
+  - Parameters: Same as analyze-anomaly endpoint
+  - Returns: Server-Sent Events (SSE) stream with analysis results
+
+- **List Agent Tools**: `GET http://localhost:8000/api/v1/agent/tools`
+  - Lists all available agent tools with descriptions and parameters
+  - Returns: JSON array of tool definitions
 
 ### Programmatic Access
 
@@ -502,6 +530,178 @@ for anomaly in anomalies:
 - Anomaly detection methods: `backend/app/services/anomaly_detection_service.py`
 - LLM validation: `backend/app/services/llm_reasoning_service.py`
 - Database models: `backend/app/db/postgres.py` (AnomalyResult)
+
+#### LLM Reasoning Agent & LangChain Integration
+
+This system includes a comprehensive LLM reasoning agent built with LangChain that provides advanced root cause analysis and anomaly explanation capabilities.
+
+**What is the LLM Reasoning Agent?**
+
+The LLM reasoning agent extends the base LLM reasoning service with:
+- **Structured Root Cause Analysis**: Identifies specific root causes with confidence scores
+- **Actionable Remediation Steps**: Provides prioritized remediation actions
+- **Severity Assessment**: Classifies anomalies by severity (LOW/MEDIUM/HIGH/CRITICAL)
+- **Cluster-Aware Analysis**: Compares outliers against cluster patterns for richer context
+- **LangChain Tool Integration**: Exposes capabilities as reusable tools for agent executors
+
+**Key Features:**
+
+1. **Enhanced Root Cause Analysis**:
+   - Multiple root cause hypotheses with confidence scores
+   - Technical explanations of underlying issues
+   - Comparison against normal log patterns
+
+2. **Remediation Guidance**:
+   - Prioritized action steps (HIGH/MEDIUM/LOW)
+   - Specific remediation actions
+   - Operational guidance
+
+3. **Cluster Context Integration**:
+   - Compares outliers against cluster patterns
+   - Uses `clustering_service.get_cluster_info()` for richer context
+   - Identifies why a log doesn't fit cluster patterns
+
+4. **LangChain Tool Wrappers**:
+   - Three reusable tools for agent executors
+   - Standardized tool interface
+   - Automatic context retrieval from Qdrant
+
+**Available LangChain Tools:**
+
+The system provides three LangChain tools accessible via `get_agent_tools()`:
+
+1. **`analyze_anomaly_tool`**:
+   - Analyzes log anomalies with optional root cause analysis
+   - Automatically retrieves similar logs from Qdrant for context
+   - Returns structured analysis with root causes and remediation steps
+
+2. **`detect_anomaly_tool`**:
+   - Classifies logs as anomalous or normal
+   - Returns confidence score and reasoning
+   - Uses semantic analysis for classification
+
+3. **`analyze_anomaly_with_cluster_context`**:
+   - Enhanced analysis using cluster information
+   - Compares outlier against cluster patterns
+   - Provides cluster-aware root cause analysis
+
+**Usage Example - LangChain Tools:**
+
+```python
+from app.services.agent_tools import get_agent_tools, analyze_anomaly_tool
+
+# Get all available tools
+tools = get_agent_tools()
+
+# Use a specific tool directly
+result = analyze_anomaly_tool.invoke({
+    "log_message": "Error: Database connection pool exhausted",
+    "log_level": "ERROR",
+    "log_service": "database",
+    "include_root_cause": True
+})
+
+# Result structure:
+# {
+#     "explanation": "This log indicates a database connection pool exhaustion...",
+#     "root_causes": [
+#         {
+#             "hypothesis": "Connection pool size too small",
+#             "confidence": 0.85,
+#             "description": "The pool may be undersized for current load"
+#         },
+#         {
+#             "hypothesis": "Connection leaks",
+#             "confidence": 0.75,
+#             "description": "Connections may not be properly closed"
+#         }
+#     ],
+#     "remediation_steps": [
+#         {
+#             "step": "Increase connection pool size",
+#             "priority": "HIGH",
+#             "description": "Increase pool size from 10 to 20 connections"
+#         },
+#         {
+#             "step": "Check for connection leaks",
+#             "priority": "MEDIUM",
+#             "description": "Audit code for unclosed connections"
+#         }
+#     ],
+#     "severity": "HIGH",
+#     "severity_reason": "Database connectivity issues can cause service outages"
+# }
+```
+
+**Usage Example - API Endpoints:**
+
+```bash
+# Analyze an anomaly with root cause analysis
+curl -X POST "http://localhost:8000/api/v1/agent/analyze-anomaly?log_message=Error%3A%20Database%20connection%20failed&log_level=ERROR&include_root_cause=true"
+
+# Analyze a specific log by ID with cluster context
+curl -X POST "http://localhost:8000/api/v1/agent/analyze-anomaly/{log_id}?include_root_cause=true&use_cluster_context=true"
+
+# Detect if a log is anomalous
+curl -X POST "http://localhost:8000/api/v1/agent/detect-anomaly?log_message=Error%3A%20Connection%20timeout&log_level=ERROR"
+
+# Stream analysis results (Server-Sent Events)
+curl -X POST "http://localhost:8000/api/v1/agent/analyze-anomaly/stream?log_message=Error%3A%20Memory%20limit%20exceeded&include_root_cause=true"
+
+# List all available agent tools
+curl "http://localhost:8000/api/v1/agent/tools"
+```
+
+**Integration with Agent Executors:**
+
+The tools are designed to work with LangChain agent executors:
+
+```python
+from langchain.agents import AgentExecutor, create_openai_tools_agent
+from langchain_openai import ChatOpenAI
+from app.services.agent_tools import get_agent_tools
+
+# Initialize LLM
+llm = ChatOpenAI(model="gpt-4", temperature=0)
+
+# Get agent tools
+tools = get_agent_tools()
+
+# Create agent executor
+agent = create_openai_tools_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+# Use the agent
+result = executor.invoke({
+    "input": "Analyze this log entry: Error: Database connection failed"
+})
+```
+
+**Enhanced Reasoning Prompts:**
+
+The LLM reasoning service uses enhanced prompts that include:
+- **Anomaly Explanation**: Detailed explanation of why the log is anomalous
+- **Root Cause Hypotheses**: 2-3 most likely root causes with confidence scores
+- **Remediation Steps**: Prioritized actionable steps to resolve the issue
+- **Severity Assessment**: Operational impact classification
+- **Cluster Comparison**: Context from cluster patterns (when available)
+
+**Response Format:**
+
+Root cause analysis returns structured JSON with:
+- `explanation`: Detailed explanation (3-4 sentences)
+- `root_causes`: Array of root cause hypotheses with confidence scores
+- `remediation_steps`: Array of prioritized remediation actions
+- `severity`: Severity level (LOW/MEDIUM/HIGH/CRITICAL)
+- `severity_reason`: Explanation of severity assessment
+- `cluster_context`: Cluster comparison information (when available)
+
+**Service Locations:**
+
+- Agent tools: `backend/app/services/agent_tools.py`
+- Agent API endpoints: `backend/app/api/v1/agent.py`
+- Enhanced LLM reasoning: `backend/app/services/llm_reasoning_service.py`
+- Cluster context integration: `backend/app/services/clustering_service.py`
 
 #### PostgreSQL (Database)
 - **Host**: `localhost`

@@ -26,6 +26,9 @@ dependencies = [
     "openai>=1.12.0",
     "hdbscan>=0.8.33",
     "scikit-learn>=1.4.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-core>=0.3.0",
     # spaCy model - installed as direct URL to avoid runtime download (which requires pip)
     "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
     "ruff>=0.14.8",

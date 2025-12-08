@@ -238,6 +238,27 @@ class ClusteringService:
             log_entries = db.query(LogEntry).filter(LogEntry.id.in_(outlier_log_ids)).all()
             log_dict = {log.id: log for log in log_entries}
 
+            # Get cluster information for richer context
+            # Find the largest cluster to use as reference for comparison
+            cluster_sizes = {}
+            for _log_id_str, cluster_id in cluster_assignments.items():
+                if cluster_id != -1:
+                    cluster_sizes[cluster_id] = cluster_sizes.get(cluster_id, 0) + 1
+
+            largest_cluster_id = None
+            if cluster_sizes:
+                largest_cluster_id = max(cluster_sizes.items(), key=lambda x: x[1])[0]
+
+            # Get cluster info for the largest cluster (if available)
+            cluster_info = None
+            if largest_cluster_id is not None:
+                try:
+                    cluster_info = self.get_cluster_info(largest_cluster_id, db)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get cluster info for cluster {largest_cluster_id}: {e}"
+                    )
+
             # Get some normal logs for context (from clusters)
             normal_log_ids = [
                 UUID(log_id_str)
@@ -266,6 +287,40 @@ class ClusteringService:
                 if not log_entry:
                     continue
 
+                # Try enhanced root cause analysis with cluster context if available
+                root_cause_result = None
+                if cluster_info:
+                    try:
+                        root_cause_result = llm_reasoning_service.analyze_anomaly_with_root_cause(
+                            log_message=log_entry.message,
+                            log_level=log_entry.level,
+                            log_service=log_entry.service,
+                            context_logs=context_logs,
+                            cluster_info=cluster_info,
+                        )
+                        if root_cause_result:
+                            # Format root cause result as reasoning string
+                            reasoning_parts = [root_cause_result.get("explanation", "")]
+                            if root_cause_result.get("root_causes"):
+                                reasoning_parts.append("\n\nRoot Causes:")
+                                for rc in root_cause_result["root_causes"]:
+                                    reasoning_parts.append(
+                                        f"- {rc.get('hypothesis', 'Unknown')}: {rc.get('description', '')}"
+                                    )
+                            if root_cause_result.get("remediation_steps"):
+                                reasoning_parts.append("\n\nRemediation Steps:")
+                                for step in root_cause_result["remediation_steps"]:
+                                    reasoning_parts.append(
+                                        f"- [{step.get('priority', 'MEDIUM')}] {step.get('step', 'Unknown')}: {step.get('description', '')}"
+                                    )
+                            reasoning_parts.append(
+                                f"\n\nSeverity: {root_cause_result.get('severity', 'MEDIUM')} - {root_cause_result.get('severity_reason', '')}"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Root cause analysis failed, falling back to standard detection: {e}"
+                        )
+
                 # Run LLM detection (validation) and ensure explanation is always generated
                 llm_result = llm_reasoning_service.detect_anomaly(
                     log_message=log_entry.message,
@@ -280,7 +335,28 @@ class ClusteringService:
                 )
 
                 if anomaly_result:
-                    if llm_result:
+                    if root_cause_result:
+                        # Use enhanced root cause analysis if available
+                        reasoning_parts = [root_cause_result.get("explanation", "")]
+                        if root_cause_result.get("root_causes"):
+                            reasoning_parts.append("\n\nRoot Causes:")
+                            for rc in root_cause_result["root_causes"]:
+                                reasoning_parts.append(
+                                    f"- {rc.get('hypothesis', 'Unknown')}: {rc.get('description', '')}"
+                                )
+                        if root_cause_result.get("remediation_steps"):
+                            reasoning_parts.append("\n\nRemediation Steps:")
+                            for step in root_cause_result["remediation_steps"]:
+                                reasoning_parts.append(
+                                    f"- [{step.get('priority', 'MEDIUM')}] {step.get('step', 'Unknown')}: {step.get('description', '')}"
+                                )
+                        reasoning_parts.append(
+                            f"\n\nSeverity: {root_cause_result.get('severity', 'MEDIUM')} - {root_cause_result.get('severity_reason', '')}"
+                        )
+                        enhanced_reasoning = "\n".join(reasoning_parts)
+                        anomaly_result.llm_reasoning = enhanced_reasoning
+                        validated_count += 1
+                    elif llm_result:
                         # LLM detection succeeded - use its results
                         llm_is_anomaly = llm_result["is_anomaly"]
                         llm_confidence = llm_result["confidence"]
