@@ -24,7 +24,7 @@ def test_settings_uses_defaults():
     settings = Settings()
     assert settings.database_url == "postgresql://ailog:changeme@localhost:5432/ailog"
     assert settings.kafka_bootstrap_servers == "localhost:9092"
-    assert settings.app_name == "AI Log Analytics"
+    assert settings.app_name == "AI Driven Semantic Log Anomaly Detection"
 
 
 def test_get_settings_loads_from_environment():

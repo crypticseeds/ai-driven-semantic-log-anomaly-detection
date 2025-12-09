@@ -129,8 +129,9 @@ async def root():
     """Root endpoint."""
     return JSONResponse(
         content={
-            "message": f"Welcome to {settings.app_name}",
+            "message": "AI Driven Semantic Log Anomaly Detection",
             "version": settings.app_version,
+            "developedBy": settings.developer_name,
         }
     )
 
