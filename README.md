@@ -250,3 +250,5 @@ See LICENSE file for details.
 [![Mail](https://img.shields.io/badge/Email-lightgrey?style=for-the-badge&logo=minutemailer&logoColor=white)](mailto:femi.akinlotan@devopsfoundry.com)
 
 **Built with ❤️ by Femi Akinlotan**
+
+</div>
