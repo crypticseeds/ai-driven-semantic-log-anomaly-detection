@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from app.models.log import ProcessedLogEntry, RawLogEntry
 from app.services.kafka_service import kafka_service
@@ -11,6 +12,9 @@ from app.services.pii_service import pii_service
 from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
+
+# Thread pool for running blocking Kafka operations
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="kafka-consumer")
 
 
 class IngestionService:
@@ -87,7 +91,11 @@ class IngestionService:
             return False
 
     async def start_consuming(self):
-        """Start consuming messages from Kafka and processing them."""
+        """Start consuming messages from Kafka and processing them.
+
+        Uses a thread pool to run blocking Kafka operations without blocking
+        the FastAPI event loop, ensuring HTTP endpoints remain responsive.
+        """
         self.running = True
         logger.info("Starting log ingestion service...")
 
@@ -97,16 +105,30 @@ class IngestionService:
                 return
             self.process_and_store(raw_data)
 
-        # Run consumer in a loop
+        def consume_batch():
+            """Consume a batch of messages (runs in thread pool)."""
+            if not self.running:
+                return
+            try:
+                # Process only 1 message at a time to avoid blocking too long
+                # Each message can trigger OpenAI API calls which take time
+                kafka_service.consume_messages(process_message, max_messages=1)
+            except Exception as e:
+                logger.error(f"Error consuming batch: {e}")
+
+        loop = asyncio.get_event_loop()
+
+        # Run consumer in a loop, offloading blocking work to thread pool
         while self.running:
             try:
-                # Consume messages (non-blocking with timeout)
-                kafka_service.consume_messages(process_message, max_messages=100)
-                # Small sleep to prevent tight loop
-                await asyncio.sleep(0.1)
+                # Run blocking Kafka consumer in thread pool to avoid blocking event loop
+                await loop.run_in_executor(_executor, consume_batch)
+                # Yield control to event loop - longer sleep to allow HTTP requests
+                # Each log processing can take 1-3 seconds due to OpenAI/Qdrant calls
+                await asyncio.sleep(0.5)
             except Exception as e:
                 logger.error(f"Error in consumption loop: {e}")
-                await asyncio.sleep(1)  # Wait before retrying
+                await asyncio.sleep(2)  # Wait before retrying
 
     def stop(self):
         """Stop the ingestion service."""

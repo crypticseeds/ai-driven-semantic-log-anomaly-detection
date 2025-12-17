@@ -1,6 +1,6 @@
 """Log search and retrieval API endpoints."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -299,6 +299,125 @@ async def _semantic_search(
             "search_type": "semantic",
         }
     )
+
+
+@router.get("/volume")
+async def get_log_volume(
+    hours: Annotated[int, Query(ge=1, le=24, description="Number of hours to look back")] = 1,
+    bucket_minutes: Annotated[
+        int, Query(ge=1, le=60, description="Time bucket size in minutes")
+    ] = 5,
+    level: Annotated[str | None, Query(description="Filter by log level")] = None,
+    service: Annotated[str | None, Query(description="Filter by service name")] = None,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Get log volume aggregated by time buckets.
+
+    Args:
+        hours: Number of hours to look back (1-24)
+        bucket_minutes: Time bucket size in minutes (1-60)
+        level: Optional filter by log level
+        service: Optional filter by service name
+        db: Database session
+
+    Returns:
+        JSON response with volume data aggregated by time buckets
+    """
+    try:
+        # Calculate time range
+        end_time = datetime.utcnow()
+        start_time = end_time - timedelta(hours=hours)
+
+        # Build base query with filters
+        query = db.query(LogEntry).filter(
+            LogEntry.timestamp >= start_time, LogEntry.timestamp <= end_time
+        )
+
+        if level:
+            query = query.filter(LogEntry.level == level.upper())
+
+        if service:
+            query = query.filter(LogEntry.service.ilike(f"%{service}%"))
+
+        # For simplicity, we'll fetch all logs and aggregate in Python
+        # In production, you might want to use more sophisticated SQL aggregation
+        logs = query.all()
+
+        # Create time buckets and aggregate
+        bucket_delta = timedelta(minutes=bucket_minutes)
+        bucket_map: dict = {}
+
+        for log in logs:
+            # Calculate which bucket this log belongs to
+            bucket_time = log.timestamp.replace(second=0, microsecond=0)
+            bucket_minute = (bucket_time.minute // bucket_minutes) * bucket_minutes
+            bucket_time = bucket_time.replace(minute=bucket_minute)
+
+            if bucket_time not in bucket_map:
+                bucket_map[bucket_time] = {
+                    "count": 0,
+                    "ERROR": 0,
+                    "WARN": 0,
+                    "INFO": 0,
+                    "DEBUG": 0,
+                }
+
+            bucket_map[bucket_time]["count"] += 1
+            if log.level in bucket_map[bucket_time]:
+                bucket_map[bucket_time][log.level] += 1
+
+        # Generate all time buckets (including empty ones)
+        all_buckets = []
+        current_time = start_time
+
+        while current_time <= end_time:
+            # Truncate to bucket boundary
+            bucket_time = current_time.replace(second=0, microsecond=0)
+            bucket_minute = (bucket_time.minute // bucket_minutes) * bucket_minutes
+            bucket_time = bucket_time.replace(minute=bucket_minute)
+
+            if bucket_time in bucket_map:
+                bucket_data = bucket_map[bucket_time]
+                result_data = {
+                    "timestamp": bucket_time.isoformat(),
+                    "count": bucket_data["count"],
+                    "level_breakdown": {
+                        "ERROR": bucket_data["ERROR"],
+                        "WARN": bucket_data["WARN"],
+                        "INFO": bucket_data["INFO"],
+                        "DEBUG": bucket_data["DEBUG"],
+                    },
+                }
+            else:
+                # Empty bucket
+                result_data = {
+                    "timestamp": bucket_time.isoformat(),
+                    "count": 0,
+                    "level_breakdown": {"ERROR": 0, "WARN": 0, "INFO": 0, "DEBUG": 0},
+                }
+
+            all_buckets.append(result_data)
+            current_time += bucket_delta
+
+        http_requests_total.labels(method="GET", endpoint="/api/v1/logs/volume", status=200).inc()
+
+        return JSONResponse(
+            content={
+                "volume_data": all_buckets,
+                "total_logs": sum(bucket["count"] for bucket in all_buckets),
+                "time_range": {
+                    "start_time": start_time.isoformat(),
+                    "end_time": end_time.isoformat(),
+                    "hours": hours,
+                    "bucket_minutes": bucket_minutes,
+                },
+                "filters": {"level": level, "service": service},
+            }
+        )
+
+    except Exception as e:
+        http_requests_total.labels(method="GET", endpoint="/api/v1/logs/volume", status=500).inc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving log volume: {str(e)}") from e
 
 
 @router.get("/{log_id}")

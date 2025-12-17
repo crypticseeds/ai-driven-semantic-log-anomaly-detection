@@ -221,6 +221,8 @@ dashboard/nextjs-app/node_modules/
 dashboard/nextjs-app/.vercel/
 dashboard/nextjs-app/.turbo/
 dashboard/nextjs-app/.env*.local
+!dashboard/nextjs-app/lib/
+
 
 # Database
 *.db
@@ -239,6 +241,9 @@ Thumbs.db
 *.swp
 *.swo
 *~
+.agent/
+.kiro/
+
 
 # UV virtual environment (if using local venv)
 .venv/
@@ -272,3 +277,11 @@ API_TESTING_GUIDE.md
 
 # Postman
 postman/
+
+docs/
+README.md
+PERFORMANCE_ANALYSIS.md
+scripts/emergency_recovery.sh
+.gitignore
+scripts/monitor_system.sh
+scripts/recover_system.sh

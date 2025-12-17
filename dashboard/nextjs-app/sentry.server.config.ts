@@ -14,11 +14,10 @@ Sentry.init({
   debug: false,
 
   // Enable logs
-  enableLogs: true,
+
 
   integrations: [
-    // Send console.log, console.warn, and console.error calls as logs to Sentry
-    Sentry.consoleLoggingIntegration({ levels: ["log", "warn", "error"] }),
+
   ],
 });
 

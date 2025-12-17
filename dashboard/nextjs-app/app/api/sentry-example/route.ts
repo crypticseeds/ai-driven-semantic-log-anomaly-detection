@@ -4,8 +4,8 @@ import { NextResponse } from "next/server";
 export async function GET() {
   try {
     // Test logging
-    const { logger } = Sentry;
-    logger.info("API route called: /api/sentry-example");
+    // Test logging
+    console.log("API route called: /api/sentry-example");
 
     // Test tracing
     return Sentry.startSpan(

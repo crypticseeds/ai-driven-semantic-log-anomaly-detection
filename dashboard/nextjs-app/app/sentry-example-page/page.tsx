@@ -21,10 +21,9 @@ export default function SentryExamplePage() {
   };
 
   const testLogging = () => {
-    const { logger } = Sentry;
-    logger.info("Test info log from Sentry example page");
-    logger.warn("Test warning log from Sentry example page");
-    logger.error("Test error log from Sentry example page");
+    console.log("Test info log from Sentry example page");
+    console.warn("Test warning log from Sentry example page");
+    console.error("Test error log from Sentry example page");
     setErrorMessage("Logs sent to Sentry! Check Sentry dashboard.");
   };
 

@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ailog}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ailog}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,7 +42,7 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1 || exit 1"]
+      test: [ "CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1 || exit 1" ]
       interval: 15s
       timeout: 10s
       retries: 8
@@ -61,13 +61,32 @@ services:
       KAFKA_BOOTSTRAP_SERVER: kafka:9092
     volumes:
       - ./kafka/init-topics.sh:/init-topics.sh:ro
-    command: ["/bin/bash", "/init-topics.sh"]
+    command: [ "/bin/bash", "/init-topics.sh" ]
     networks:
       - ai-log-network
     depends_on:
       kafka:
         condition: service_healthy
     restart: "no"
+
+  # Kafbat UI (Kafka Management & Visualization)
+  kafbat-ui:
+    image: ghcr.io/kafbat/kafka-ui:latest
+    container_name: ai-log-kafbat-ui
+    ports:
+      - "8080:8080"
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "true"
+      KAFKA_CLUSTERS_0_NAME: "ai-log-kafka-cluster"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
+    networks:
+      - ai-log-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   # Fluent Bit (Log Forwarder)
   fluentbit:
@@ -77,7 +96,7 @@ services:
       - ../ingestion/fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
       - ../ingestion/fluentbit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
       - /var/log:/var/log:ro
-    command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.conf"]
+    command: [ "/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.conf" ]
     networks:
       - ai-log-network
     depends_on:
@@ -108,6 +127,10 @@ services:
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
+      # Debug mode for development (enables CORS regex for local network IPs)
+      DEBUG: "true"
+      # CORS configuration for local network access
+      CORS_ORIGINS: '["http://localhost:3000","http://localhost:3001","http://127.0.0.1:3000","http://127.0.0.1:3001","http://0.0.0.0:3000","http://0.0.0.0:3001"]'
     ports:
       - "8000:8000"
     volumes:
@@ -123,6 +146,12 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
     # Secrets are injected by Doppler CLI when running: doppler run -- docker-compose up
     # For CI/CD: doppler run --token=$DOPPLER_TOKEN -- docker-compose up
@@ -177,7 +206,7 @@ services:
       - ../infra/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ../infra/grafana/datasources:/etc/grafana/provisioning/datasources:ro
     ports:
-      - "3000:3000"
+      - "3001:3000"
     networks:
       - ai-log-network
     depends_on:
@@ -188,18 +217,17 @@ services:
   tempo:
     image: grafana/tempo:latest
     container_name: ai-log-tempo
-    command: ["-config.file=/etc/tempo/tempo.yml"]
+    command: [ "-config.file=/etc/tempo/tempo.yml" ]
     volumes:
       - ../infra/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
       - tempo_data:/var/tempo
     ports:
-      - "4317:4317"  # OTLP gRPC
-      - "4318:4318"  # OTLP HTTP
-      - "3200:3200"  # Tempo
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+      - "3200:3200" # Tempo
     networks:
       - ai-log-network
     restart: unless-stopped
-
   # Langfuse (LLM Observability)
   # Note: This docker image is included for self-contained deployment/testing.
   # For production, use Langfuse Cloud (credentials configured via Doppler).
@@ -241,7 +269,7 @@ volumes:
   prometheus_data:
   grafana_data:
   tempo_data:
-  # ollama_data:  # Uncomment if using Ollama service
+    # ollama_data:  # Uncomment if using Ollama service
 
 networks:
   ai-log-network:
