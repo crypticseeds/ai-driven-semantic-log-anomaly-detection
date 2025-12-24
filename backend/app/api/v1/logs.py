@@ -16,7 +16,6 @@ from app.observability.metrics import http_requests_total
 from app.services.anomaly_detection_service import anomaly_detection_service
 from app.services.clustering_service import clustering_service
 from app.services.embedding_service import BudgetExceededError, embedding_service
-from app.services.pii_service import pii_service
 from app.services.qdrant_service import qdrant_service
 
 router = APIRouter(prefix="/api/v1/logs", tags=["logs"])
@@ -112,8 +111,9 @@ async def search_logs(
         if filters:
             db_query = db_query.filter(and_(*filters))
 
-        # Order by timestamp descending (newest first)
-        db_query = db_query.order_by(LogEntry.timestamp.desc())
+        # Order by created_at descending (newest ingested first) for real-time monitoring
+        # This ensures recently ingested logs appear first, even if their original timestamp is old
+        db_query = db_query.order_by(LogEntry.created_at.desc())
 
         # Get total count
         total = db_query.count()
@@ -121,21 +121,20 @@ async def search_logs(
         # Apply pagination
         entries = db_query.offset(offset).limit(limit).all()
 
-        # Convert to response format and redact PII from messages
+        # Convert to response format
+        # NOTE: Messages are already PII-redacted during ingestion, no need to re-redact
+        # Re-redacting would cause issues like [EMAIL] becoming [REDACTED]
         results = []
         for entry in entries:
-            # Redact PII from the message field before returning
-            redacted_message, pii_entities = pii_service.redact_pii(entry.message)
-
             result = {
                 "id": str(entry.id),
                 "timestamp": entry.timestamp.isoformat(),
                 "level": entry.level,
                 "service": entry.service,
-                "message": redacted_message,  # PII-redacted message
+                "message": entry.message,  # Already PII-redacted during ingestion
                 "metadata": entry.log_metadata,
                 "pii_redacted": entry.pii_redacted,
-                "pii_entities_detected": pii_entities,  # PII entities found in this search
+                "pii_entities_detected": {},  # PII entities stored during ingestion (not in current schema)
                 "created_at": entry.created_at.isoformat(),
             }
             results.append(result)
@@ -270,18 +269,16 @@ async def _semantic_search(
             except ValueError:
                 pass
 
-        # Redact PII from the message field before returning
-        redacted_message, pii_entities = pii_service.redact_pii(entry.message)
-
+        # NOTE: Messages are already PII-redacted during ingestion, no need to re-redact
         result = {
             "id": str(entry.id),
             "timestamp": entry.timestamp.isoformat(),
             "level": entry.level,
             "service": entry.service,
-            "message": redacted_message,
+            "message": entry.message,  # Already PII-redacted during ingestion
             "metadata": entry.log_metadata,
             "pii_redacted": entry.pii_redacted,
-            "pii_entities_detected": pii_entities,
+            "pii_entities_detected": {},  # PII entities stored during ingestion (not in current schema)
             "created_at": entry.created_at.isoformat(),
             "similarity_score": vector_result["score"],
         }
@@ -309,6 +306,9 @@ async def get_log_volume(
     ] = 5,
     level: Annotated[str | None, Query(description="Filter by log level")] = None,
     service: Annotated[str | None, Query(description="Filter by service name")] = None,
+    use_ingestion_time: Annotated[
+        bool, Query(description="Use ingestion time (created_at) instead of log timestamp")
+    ] = True,
     db: Session = Depends(get_db),
 ) -> JSONResponse:
     """Get log volume aggregated by time buckets.
@@ -318,6 +318,9 @@ async def get_log_volume(
         bucket_minutes: Time bucket size in minutes (1-60)
         level: Optional filter by log level
         service: Optional filter by service name
+        use_ingestion_time: If True, filter by when logs were ingested (created_at).
+                           If False, filter by original log timestamp.
+                           Default is True for real-time monitoring.
         db: Database session
 
     Returns:
@@ -328,10 +331,13 @@ async def get_log_volume(
         end_time = datetime.utcnow()
         start_time = end_time - timedelta(hours=hours)
 
+        # Choose which timestamp field to filter by
+        # created_at = when log was ingested (useful for real-time monitoring)
+        # timestamp = original log timestamp (useful for historical analysis)
+        time_field = LogEntry.created_at if use_ingestion_time else LogEntry.timestamp
+
         # Build base query with filters
-        query = db.query(LogEntry).filter(
-            LogEntry.timestamp >= start_time, LogEntry.timestamp <= end_time
-        )
+        query = db.query(LogEntry).filter(time_field >= start_time, time_field <= end_time)
 
         if level:
             query = query.filter(LogEntry.level == level.upper())
@@ -349,7 +355,9 @@ async def get_log_volume(
 
         for log in logs:
             # Calculate which bucket this log belongs to
-            bucket_time = log.timestamp.replace(second=0, microsecond=0)
+            # Use the same time field that was used for filtering
+            log_time = log.created_at if use_ingestion_time else log.timestamp
+            bucket_time = log_time.replace(second=0, microsecond=0)
             bucket_minute = (bucket_time.minute // bucket_minutes) * bucket_minutes
             bucket_time = bucket_time.replace(minute=bucket_minute)
 
@@ -427,7 +435,7 @@ async def get_log(
 ) -> JSONResponse:
     """Get a specific log entry by ID.
 
-    The message field is automatically redacted for PII before being returned.
+    The message field was already redacted for PII during ingestion.
 
     Args:
         log_id: UUID of the log entry
@@ -445,19 +453,17 @@ async def get_log(
             ).inc()
             raise HTTPException(status_code=404, detail="Log entry not found")
 
-        # Redact PII from the message field before returning
-        redacted_message, pii_entities = pii_service.redact_pii(entry.message)
-
+        # NOTE: Messages are already PII-redacted during ingestion, no need to re-redact
         result = {
             "id": str(entry.id),
             "timestamp": entry.timestamp.isoformat(),
             "level": entry.level,
             "service": entry.service,
-            "message": redacted_message,  # PII-redacted message
+            "message": entry.message,  # Already PII-redacted during ingestion
             "raw_log": entry.raw_log,  # Original log (for audit, if authorized)
             "metadata": entry.log_metadata,
             "pii_redacted": entry.pii_redacted,
-            "pii_entities_detected": pii_entities,  # PII entities found in this retrieval
+            "pii_entities_detected": {},  # PII entities stored during ingestion (not in current schema)
             "created_at": entry.created_at.isoformat(),
         }
 
@@ -719,16 +725,14 @@ async def get_outliers(
         for outlier_result in outlier_results:
             log_entry = log_dict.get(outlier_result.log_entry_id)
             if log_entry:
-                # Redact PII from message
-                redacted_message, pii_entities = pii_service.redact_pii(log_entry.message)
-
+                # NOTE: Messages are already PII-redacted during ingestion, no need to re-redact
                 result.append(
                     {
                         "id": str(log_entry.id),
                         "timestamp": log_entry.timestamp.isoformat(),
                         "level": log_entry.level,
                         "service": log_entry.service,
-                        "message": redacted_message,
+                        "message": log_entry.message,  # Already PII-redacted during ingestion
                         "anomaly_score": outlier_result.anomaly_score,
                         "created_at": log_entry.created_at.isoformat(),
                     }

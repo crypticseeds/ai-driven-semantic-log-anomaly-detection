@@ -161,6 +161,28 @@ class Settings(BaseSettings):
         description="Minimum LLM confidence to confirm anomaly (0.0 to 1.0)",
     )
 
+    # Embedding Pipeline Configuration
+    embedding_enabled: bool = Field(
+        default=True,
+        description="Enable embedding generation (can be disabled to speed up ingestion)",
+    )
+    embedding_log_levels: list[str] = Field(
+        default_factory=lambda: ["ERROR", "WARN", "WARNING", "CRITICAL", "FATAL"],
+        description="Log levels that trigger embedding generation (selective processing)",
+    )
+    embedding_batch_size: int = Field(
+        default=50,
+        description="Number of logs to batch before sending to OpenAI (1-2048)",
+    )
+    embedding_batch_timeout_seconds: float = Field(
+        default=5.0,
+        description="Max seconds to wait before processing incomplete batch",
+    )
+    embedding_parallel_batches: int = Field(
+        default=3,
+        description="Number of batches to process in parallel",
+    )
+
     # Application
     app_name: str = Field(
         default="AI Driven Semantic Log Anomaly Detection",

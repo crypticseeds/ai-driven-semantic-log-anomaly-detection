@@ -156,6 +156,12 @@ services:
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
+      # Embedding Pipeline Configuration (injected by Doppler)
+      EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-true}
+      EMBEDDING_LOG_LEVELS: ${EMBEDDING_LOG_LEVELS:-}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-50}
+      EMBEDDING_BATCH_TIMEOUT_SECONDS: ${EMBEDDING_BATCH_TIMEOUT_SECONDS:-5.0}
+      EMBEDDING_PARALLEL_BATCHES: ${EMBEDDING_PARALLEL_BATCHES:-3}
       # Debug mode for development (enables CORS regex for local network IPs)
       DEBUG: "true"
       # CORS configuration for local network access
