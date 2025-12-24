@@ -37,6 +37,9 @@ async def search_logs(
         float | None,
         Query(ge=0.0, le=1.0, description="Minimum similarity score for semantic search"),
     ] = None,
+    is_anomaly: Annotated[
+        bool | None, Query(description="Filter by anomaly status (true/false)")
+    ] = None,
     db: Session = Depends(get_db),
 ) -> JSONResponse:
     """Search logs with optional filters and semantic search support.
@@ -54,6 +57,7 @@ async def search_logs(
         offset: Offset for pagination
         use_semantic_search: Use semantic search with vector embeddings
         similarity_threshold: Minimum similarity score (0.0-1.0) for semantic search
+        is_anomaly: Filter by anomaly status (true for anomalies only, false for normal only)
         db: Database session
 
     Returns:
@@ -71,12 +75,35 @@ async def search_logs(
                 limit=limit,
                 offset=offset,
                 similarity_threshold=similarity_threshold,
+                is_anomaly=is_anomaly,
                 db=db,
             )
 
         # Traditional text-based search
         # Build query filters
         filters = []
+
+        # If filtering by anomaly status, we need to join with AnomalyResult
+        anomaly_log_ids = None
+        if is_anomaly is not None:
+            anomaly_results = (
+                db.query(AnomalyResult.log_entry_id)
+                .filter(AnomalyResult.is_anomaly == is_anomaly)
+                .all()
+            )
+            anomaly_log_ids = [r.log_entry_id for r in anomaly_results]
+            if not anomaly_log_ids:
+                # No logs match the anomaly filter
+                return JSONResponse(
+                    content={
+                        "results": [],
+                        "total": 0,
+                        "limit": limit,
+                        "offset": offset,
+                        "has_more": False,
+                        "search_type": "text",
+                    }
+                )
 
         if level:
             filters.append(LogEntry.level == level.upper())
@@ -106,6 +133,10 @@ async def search_logs(
             # Search in message field
             filters.append(LogEntry.message.ilike(f"%{query}%"))
 
+        # Add anomaly filter if specified
+        if anomaly_log_ids is not None:
+            filters.append(LogEntry.id.in_(anomaly_log_ids))
+
         # Execute query
         db_query = db.query(LogEntry)
         if filters:
@@ -121,11 +152,24 @@ async def search_logs(
         # Apply pagination
         entries = db_query.offset(offset).limit(limit).all()
 
+        # Get anomaly info for all entries
+        entry_ids = [entry.id for entry in entries]
+        anomaly_info_map = {}
+        if entry_ids:
+            anomaly_results = (
+                db.query(AnomalyResult).filter(AnomalyResult.log_entry_id.in_(entry_ids)).all()
+            )
+            anomaly_info_map = {
+                r.log_entry_id: {"is_anomaly": r.is_anomaly, "anomaly_score": r.anomaly_score}
+                for r in anomaly_results
+            }
+
         # Convert to response format
         # NOTE: Messages are already PII-redacted during ingestion, no need to re-redact
         # Re-redacting would cause issues like [EMAIL] becoming [REDACTED]
         results = []
         for entry in entries:
+            anomaly_info = anomaly_info_map.get(entry.id, {})
             result = {
                 "id": str(entry.id),
                 "timestamp": entry.timestamp.isoformat(),
@@ -136,6 +180,8 @@ async def search_logs(
                 "pii_redacted": entry.pii_redacted,
                 "pii_entities_detected": {},  # PII entities stored during ingestion (not in current schema)
                 "created_at": entry.created_at.isoformat(),
+                "is_anomaly": anomaly_info.get("is_anomaly", False),
+                "anomaly_score": anomaly_info.get("anomaly_score"),
             }
             results.append(result)
 
@@ -168,6 +214,7 @@ async def _semantic_search(
     limit: int,
     offset: int,
     similarity_threshold: float | None,
+    is_anomaly: bool | None,
     db: Session,
 ) -> JSONResponse:
     """Perform semantic search using Qdrant vector search with hybrid filtering.
@@ -181,6 +228,7 @@ async def _semantic_search(
         limit: Maximum results
         offset: Pagination offset
         similarity_threshold: Minimum similarity score
+        is_anomaly: Filter by anomaly status
         db: Database session
 
     Returns:
@@ -243,6 +291,13 @@ async def _semantic_search(
     # Create a mapping of ID to entry for efficient lookup
     entry_map = {entry.id: entry for entry in entries}
 
+    # Get anomaly info for all entries
+    anomaly_results = db.query(AnomalyResult).filter(AnomalyResult.log_entry_id.in_(log_ids)).all()
+    anomaly_info_map = {
+        r.log_entry_id: {"is_anomaly": r.is_anomaly, "anomaly_score": r.anomaly_score}
+        for r in anomaly_results
+    }
+
     # Build results in the same order as vector search results
     results = []
     for vector_result in vector_results:
@@ -250,6 +305,14 @@ async def _semantic_search(
         entry = entry_map.get(log_id)
 
         if not entry:
+            continue
+
+        # Get anomaly info for this entry
+        anomaly_info = anomaly_info_map.get(log_id, {})
+        entry_is_anomaly = anomaly_info.get("is_anomaly", False)
+
+        # Apply anomaly filter if specified
+        if is_anomaly is not None and entry_is_anomaly != is_anomaly:
             continue
 
         # Apply time filters if specified
@@ -281,6 +344,8 @@ async def _semantic_search(
             "pii_entities_detected": {},  # PII entities stored during ingestion (not in current schema)
             "created_at": entry.created_at.isoformat(),
             "similarity_score": vector_result["score"],
+            "is_anomaly": entry_is_anomaly,
+            "anomaly_score": anomaly_info.get("anomaly_score"),
         }
         results.append(result)
 
