@@ -23,15 +23,19 @@ EXCLUDED_ENTITY_TYPES = {
     "PERSON",  # Too many false positives with service names, hostnames
 }
 
-# Patterns that indicate the text is technical/log data, not user content
-# If these patterns are found, we skip PII redaction entirely
-LOG_PATTERN_INDICATORS = [
+# Patterns that indicate the text is kernel/system log data
+# These specific patterns rarely contain user PII and produce false positives
+# Note: We do NOT skip HTTP access logs as they contain IP addresses to redact
+KERNEL_LOG_INDICATORS = [
     r"kernel:\s*\[",  # Kernel logs
     r"\[\s*\d+\.\d+\]",  # Kernel timestamp format
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}",  # ISO timestamp at start
-    r"(INFO|DEBUG|WARN|ERROR|TRACE)\s*[:\-\|]",  # Log level indicators
-    r"pid=\d+|uid=\d+|gid=\d+",  # Process/user IDs
+    r"pid=\d+|uid=\d+|gid=\d+",  # Process/user IDs in kernel logs
 ]
+
+# Regex to match IP:PORT patterns for selective redaction
+# This catches both IPv4 addresses with ports (e.g., 192.168.1.1:8080)
+# and standalone IPv4 addresses
+IP_PORT_PATTERN = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d{1,5})?\b")
 
 
 class PIIService:
@@ -53,31 +57,56 @@ class PIIService:
 
     _analyzer = None
     _anonymizer = None
-    _log_pattern_regex = None
+    _kernel_log_regex = None
 
     def __init__(self):
         """Initialize Presidio analyzer and anonymizer lazily."""
-        # Compile log pattern regex for performance
-        if PIIService._log_pattern_regex is None:
-            PIIService._log_pattern_regex = re.compile(
-                "|".join(LOG_PATTERN_INDICATORS), re.IGNORECASE
+        # Compile kernel log pattern regex for performance
+        if PIIService._kernel_log_regex is None:
+            PIIService._kernel_log_regex = re.compile(
+                "|".join(KERNEL_LOG_INDICATORS), re.IGNORECASE
             )
 
-    def _is_technical_log(self, text: str) -> bool:
-        """Check if text appears to be technical log data.
+    def _is_kernel_log(self, text: str) -> bool:
+        """Check if text appears to be kernel/system log data.
 
-        Technical logs (kernel messages, system logs) typically don't contain
-        user PII and produce many false positives with Presidio.
+        Kernel logs typically don't contain user PII and produce many false positives.
+        Note: HTTP access logs are NOT considered kernel logs - they contain IPs to redact.
 
         Args:
             text: Text to check
 
         Returns:
-            True if text appears to be technical log data
+            True if text appears to be kernel log data
         """
         if not text:
             return False
-        return bool(PIIService._log_pattern_regex.search(text))
+        return bool(PIIService._kernel_log_regex.search(text))
+
+    def _redact_ip_addresses(self, text: str) -> tuple[str, int]:
+        """Redact IP addresses and IP:PORT patterns from text.
+
+        This is a targeted redaction that catches IP addresses that Presidio might miss,
+        especially in HTTP access log formats.
+
+        Args:
+            text: Text to redact IPs from
+
+        Returns:
+            Tuple of (redacted_text, count_of_ips_redacted)
+        """
+        count = 0
+
+        def replace_ip(match):
+            nonlocal count
+            count += 1
+            # If there's a port, redact both IP and port
+            if match.group(2):
+                return "[IP]:[PORT]"
+            return "[IP]"
+
+        redacted = IP_PORT_PATTERN.sub(replace_ip, text)
+        return redacted, count
 
     @property
     def analyzer(self):
@@ -148,6 +177,10 @@ class PIIService:
     def redact_pii(self, text: str, _entities: list[dict] | None = None) -> tuple[str, dict]:
         """Redact PII from text.
 
+        Uses a two-phase approach:
+        1. Always redact IP addresses using regex (reliable, no false positives)
+        2. For non-kernel logs, also run Presidio for other PII types
+
         Args:
             text: Text to redact PII from
             _entities: Unused parameter (kept for API compatibility)
@@ -157,32 +190,42 @@ class PIIService:
             - redacted_text: Text with PII replaced by placeholders
             - entity_summary: Dictionary mapping entity types to counts
         """
-        # Skip PII detection for technical log data (kernel logs, system logs)
-        # These produce many false positives and rarely contain user PII
-        if self._is_technical_log(text):
-            logger.debug("Skipping PII detection for technical log data")
-            return text, {}
+        entity_summary = {}
 
-        # Always re-analyze to get proper RecognizerResult objects for anonymizer
+        # Phase 1: Always redact IP addresses (this is critical for security)
+        # This catches IPs in HTTP access logs that might be skipped by Presidio
+        text, ip_count = self._redact_ip_addresses(text)
+        if ip_count > 0:
+            entity_summary["IP_ADDRESS"] = ip_count
+
+        # Phase 2: Skip additional PII detection for kernel log data
+        # Kernel logs produce many false positives and rarely contain user PII
+        if self._is_kernel_log(text):
+            logger.debug("Skipping Presidio PII detection for kernel log data")
+            return text, entity_summary
+
+        # Run Presidio for other PII types (email, phone, SSN, credit card, etc.)
         try:
             analyzer_results = self.analyzer.analyze(text=text, language="en")
         except Exception as e:
             logger.error(f"PII analysis error: {e}", exc_info=True)
-            return text, {}
+            return text, entity_summary
 
         if not analyzer_results:
-            return text, {}
+            return text, entity_summary
 
-        # Filter out excluded entity types and low-confidence detections
+        # Filter out excluded entity types, low-confidence detections, and IP_ADDRESS
+        # (IP addresses already handled by regex above)
         filtered_results = [
             result
             for result in analyzer_results
             if result.entity_type not in EXCLUDED_ENTITY_TYPES
+            and result.entity_type != "IP_ADDRESS"  # Already handled
             and result.score >= PII_CONFIDENCE_THRESHOLD
         ]
 
         if not filtered_results:
-            return text, {}
+            return text, entity_summary
 
         # Get operator configuration for redaction
         operator_config = self._get_operator_config()
@@ -195,8 +238,7 @@ class PIIService:
             )
             redacted_text = anonymized_result.text
 
-            # Build entity summary
-            entity_summary = {}
+            # Build entity summary (add to existing IP count)
             for result in filtered_results:
                 entity_type = result.entity_type
                 if entity_type not in entity_summary:
@@ -205,9 +247,9 @@ class PIIService:
 
             return redacted_text, entity_summary
         except Exception as e:
-            # Log error but return original text
+            # Log error but return text with IPs already redacted
             logger.error(f"PII redaction error: {e}", exc_info=True)
-            return text, {}
+            return text, entity_summary
 
 
 # Global instance
