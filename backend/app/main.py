@@ -299,12 +299,18 @@ async def cors_diagnostic(request: Request):
         suggestions.append(f"Add '{origin}' to CORS_ORIGINS environment variable")
 
     if origin and referer:
-        origin_host = origin.replace("http://", "").replace("https://", "").split(":")[0]
-        referer_host = (
-            referer.replace("http://", "").replace("https://", "").split("/")[2].split(":")[0]
-        )
-        if origin_host != referer_host:
-            issues.append("Origin and Referer hosts don't match")
+        try:
+            from urllib.parse import urlparse
+
+            origin_parsed = urlparse(origin)
+            referer_parsed = urlparse(referer)
+            origin_host = origin_parsed.hostname or ""
+            referer_host = referer_parsed.hostname or ""
+            if origin_host and referer_host and origin_host != referer_host:
+                issues.append("Origin and Referer hosts don't match")
+        except Exception:
+            # If URL parsing fails, skip this check
+            pass
 
     # Check for mixed content
     if origin and origin.startswith("https://") and str(request.base_url).startswith("http://"):

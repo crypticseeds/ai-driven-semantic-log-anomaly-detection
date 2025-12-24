@@ -285,3 +285,6 @@ scripts/emergency_recovery.sh
 .gitignore
 scripts/monitor_system.sh
 scripts/recover_system.sh
+
+observations.md
+scrapbook.md

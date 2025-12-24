@@ -3,6 +3,12 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: ai-log-postgres
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+        tag: docker.postgres
+        fluentd-async: "true"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-ailog}
       POSTGRES_USER: ${POSTGRES_USER:-ailog}
@@ -23,6 +29,12 @@ services:
   kafka:
     image: apache/kafka:3.7.0
     container_name: ai-log-kafka
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+        tag: docker.kafka
+        fluentd-async: "true"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -73,6 +85,12 @@ services:
   kafbat-ui:
     image: ghcr.io/kafbat/kafka-ui:latest
     container_name: ai-log-kafbat-ui
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+        tag: docker.kafbat-ui
+        fluentd-async: "true"
     ports:
       - "8080:8080"
     environment:
@@ -92,10 +110,15 @@ services:
   fluentbit:
     image: fluent/fluent-bit:3.0.0
     container_name: ai-log-fluentbit
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
     volumes:
-      - ../ingestion/fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
-      - ../ingestion/fluentbit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - ../infra/ingestion/fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ../infra/ingestion/fluentbit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
       - /var/log:/var/log:ro
+      # Persist position tracking database across restarts
+      - fluentbit_db:/fluent-bit/db
     command: [ "/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.conf" ]
     networks:
       - ai-log-network
@@ -112,6 +135,12 @@ services:
       context: ..
       dockerfile: infra/docker/backend.Dockerfile
     container_name: ai-log-backend
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+        tag: docker.backend
+        fluentd-async: "true"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-ailog}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ailog}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -183,6 +212,12 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: ai-log-prometheus
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+        tag: docker.prometheus
+        fluentd-async: "true"
     volumes:
       - ../infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -199,6 +234,12 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: ai-log-grafana
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+        tag: docker.grafana
+        fluentd-async: "true"
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
@@ -217,6 +258,12 @@ services:
   tempo:
     image: grafana/tempo:latest
     container_name: ai-log-tempo
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+        tag: docker.tempo
+        fluentd-async: "true"
     command: [ "-config.file=/etc/tempo/tempo.yml" ]
     volumes:
       - ../infra/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
@@ -269,6 +316,7 @@ volumes:
   prometheus_data:
   grafana_data:
   tempo_data:
+  fluentbit_db:
     # ollama_data:  # Uncomment if using Ollama service
 
 networks:
