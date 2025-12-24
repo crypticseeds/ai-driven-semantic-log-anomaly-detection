@@ -84,6 +84,7 @@ export function LogFeed({ filters = {} }: LogFeedProps) {
             <div className="flex-1 flex flex-col h-full min-h-0 bg-background">
                 <div className="flex items-center px-4 h-10 border-b border-border bg-muted/10 text-xs font-semibold text-muted-foreground">
                     <div className="w-10"></div>
+                    <div className="w-24 hidden lg:block">ID</div>
                     <div className="w-32">Time</div>
                     <div className="w-16">Level</div>
                     <div className="w-32 hidden md:block">Service</div>
@@ -93,6 +94,7 @@ export function LogFeed({ filters = {} }: LogFeedProps) {
                     {Array.from({ length: 10 }).map((_, i) => (
                         <div key={i} className="flex items-center gap-4">
                             <Skeleton className="w-10 h-8" />
+                            <Skeleton className="w-24 h-8 hidden lg:block" />
                             <Skeleton className="w-32 h-8" />
                             <Skeleton className="w-16 h-8" />
                             <Skeleton className="w-32 h-8 hidden md:block" />
@@ -127,6 +129,7 @@ export function LogFeed({ filters = {} }: LogFeedProps) {
             {/* Feed Header */}
             <div className="flex items-center px-4 h-10 border-b border-border bg-muted/10 text-xs font-semibold text-muted-foreground sticky top-0 z-10 backdrop-blur-sm">
                 <div className="w-10"></div>
+                <div className="w-24 hidden lg:block">ID</div>
                 <div className="w-32">Time</div>
                 <div className="w-16">Level</div>
                 <div className="w-32 hidden md:block">Service</div>

@@ -54,6 +54,10 @@ export function LogRow({ log }: LogRowProps) {
                     expanded && "rotate-90"
                 )} />
 
+                <div className="w-24 shrink-0 text-muted-foreground text-xs font-mono hidden lg:block" title={log.id}>
+                    {log.id.slice(0, 8)}...
+                </div>
+
                 <div className="w-32 shrink-0 text-muted-foreground text-xs">
                     {new Date(log.timestamp).toLocaleTimeString()}
                 </div>
@@ -86,6 +90,22 @@ export function LogRow({ log }: LogRowProps) {
             {expanded && (
                 <div className="px-10 py-4 bg-muted/20 border-t border-border/50 text-xs space-y-3 animate-in slide-in-from-top-2 duration-200">
                     <div className="grid grid-cols-[120px_1fr] gap-3">
+                        <span className="text-muted-foreground font-semibold">ID:</span>
+                        <span 
+                            className="text-foreground font-mono cursor-pointer hover:bg-muted/50 px-1 py-0.5 rounded transition-colors select-all" 
+                            title="Click to select full ID"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                const selection = window.getSelection();
+                                const range = document.createRange();
+                                range.selectNodeContents(e.currentTarget);
+                                selection?.removeAllRanges();
+                                selection?.addRange(range);
+                            }}
+                        >
+                            {log.id}
+                        </span>
+
                         <span className="text-muted-foreground font-semibold">Timestamp:</span>
                         <span className="text-foreground font-mono">{new Date(log.timestamp).toLocaleString()}</span>
 
