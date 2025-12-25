@@ -24,6 +24,15 @@ services:
       retries: 5
     networks:
       - ai-log-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    restart: unless-stopped
 
   # Kafka (KRaft mode - no Zookeeper)
   kafka:
@@ -48,6 +57,8 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}
+      # Memory settings for development
+      KAFKA_HEAP_OPTS: "-Xmx384m -Xms256m"
     ports:
       - "9092:9092"
       - "9094:9094"
@@ -63,6 +74,14 @@ services:
       - ai-log-network
     depends_on:
       - postgres
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.75'
+        reservations:
+          memory: 384M
+          cpus: '0.5'
     restart: unless-stopped
 
   # Kafka Topics Initialization
@@ -82,29 +101,37 @@ services:
     restart: "no"
 
   # Kafbat UI (Kafka Management & Visualization)
-  kafbat-ui:
-    image: ghcr.io/kafbat/kafka-ui:latest
-    container_name: ai-log-kafbat-ui
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
-        tag: docker.kafbat-ui
-        fluentd-async: "true"
-    ports:
-      - "8080:8080"
-    environment:
-      DYNAMIC_CONFIG_ENABLED: "true"
-      KAFKA_CLUSTERS_0_NAME: "ai-log-kafka-cluster"
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
-    networks:
-      - ai-log-network
-    depends_on:
-      kafka:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-    restart: unless-stopped
+  # kafbat-ui:
+  #   image: ghcr.io/kafbat/kafka-ui:latest
+  #   container_name: ai-log-kafbat-ui
+  #   logging:
+  #     driver: fluentd
+  #     options:
+  #       fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+  #       tag: docker.kafbat-ui
+  #       fluentd-async: "true"
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     DYNAMIC_CONFIG_ENABLED: "true"
+  #     KAFKA_CLUSTERS_0_NAME: "ai-log-kafka-cluster"
+  #     KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
+  #   networks:
+  #     - ai-log-network
+  #   depends_on:
+  #     kafka:
+  #       condition: service_healthy
+  #     kafka-init:
+  #       condition: service_completed_successfully
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 384M
+  #         cpus: '0.5'
+  #       reservations:
+  #         memory: 192M
+  #         cpus: '0.25'
+  #   restart: unless-stopped
 
   # Fluent Bit (Log Forwarder)
   fluentbit:
@@ -158,10 +185,19 @@ services:
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
       # Embedding Pipeline Configuration (injected by Doppler)
       EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-true}
-      EMBEDDING_LOG_LEVELS: ${EMBEDDING_LOG_LEVELS:-}
+      EMBEDDING_LOG_LEVELS: ${EMBEDDING_LOG_LEVELS:-ERROR,WARN,WARNING,CRITICAL,FATAL}
       EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-50}
       EMBEDDING_BATCH_TIMEOUT_SECONDS: ${EMBEDDING_BATCH_TIMEOUT_SECONDS:-5.0}
       EMBEDDING_PARALLEL_BATCHES: ${EMBEDDING_PARALLEL_BATCHES:-3}
+      # Clustering Performance Configuration (injected by Doppler)
+      CLUSTERING_MAX_EMBEDDINGS: ${CLUSTERING_MAX_EMBEDDINGS:-2000}
+      CLUSTERING_SKIP_LLM_DEFAULT: ${CLUSTERING_SKIP_LLM_DEFAULT:-true}
+      CLUSTERING_MAX_LLM_OUTLIERS: ${CLUSTERING_MAX_LLM_OUTLIERS:-5}
+      CLUSTERING_USE_FLOAT32: ${CLUSTERING_USE_FLOAT32:-true}
+      # HDBSCAN Configuration (injected by Doppler)
+      HDBSCAN_MIN_CLUSTER_SIZE: ${HDBSCAN_MIN_CLUSTER_SIZE:-5}
+      HDBSCAN_MIN_SAMPLES: ${HDBSCAN_MIN_SAMPLES:-3}
+      HDBSCAN_SAMPLE_SIZE: ${HDBSCAN_SAMPLE_SIZE:-}
       # Debug mode for development (enables CORS regex for local network IPs)
       DEBUG: "true"
       # CORS configuration for local network access
@@ -182,11 +218,19 @@ services:
       kafka-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+          cpus: '2.0'
+        reservations:
+          memory: 1024M
+          cpus: '1.0'
     restart: unless-stopped
     # Secrets are injected by Doppler CLI when running: doppler run -- docker-compose up
     # For CI/CD: doppler run --token=$DOPPLER_TOKEN -- docker-compose up
@@ -215,72 +259,88 @@ services:
   #     - backend
 
   # Prometheus (Metrics)
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: ai-log-prometheus
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
-        tag: docker.prometheus
-        fluentd-async: "true"
-    volumes:
-      - ../infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-    ports:
-      - "9090:9090"
-    networks:
-      - ai-log-network
-    restart: unless-stopped
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: ai-log-prometheus
+  #   logging:
+  #     driver: fluentd
+  #     options:
+  #       fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+  #       tag: docker.prometheus
+  #       fluentd-async: "true"
+  #   volumes:
+  #     - ../infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus_data:/prometheus
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.path=/prometheus'
+  #   ports:
+  #     - "9090:9090"
+  #   networks:
+  #     - ai-log-network
+  #   restart: unless-stopped
 
   # Grafana (Dashboards)
-  grafana:
-    image: grafana/grafana:latest
-    container_name: ai-log-grafana
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
-        tag: docker.grafana
-        fluentd-async: "true"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ../infra/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ../infra/grafana/datasources:/etc/grafana/provisioning/datasources:ro
-    ports:
-      - "3001:3000"
-    networks:
-      - ai-log-network
-    depends_on:
-      - prometheus
-    restart: unless-stopped
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: ai-log-grafana
+  #   logging:
+  #     driver: fluentd
+  #     options:
+  #       fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+  #       tag: docker.grafana
+  #       fluentd-async: "true"
+  #   environment:
+  #     GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+  #   volumes:
+  #     - grafana_data:/var/lib/grafana
+  #     - ../infra/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+  #     - ../infra/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+  #   ports:
+  #     - "3001:3000"
+  #   networks:
+  #     - ai-log-network
+  #   depends_on:
+  #     - prometheus
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 256M
+  #         cpus: '0.5'
+  #       reservations:
+  #         memory: 128M
+  #         cpus: '0.25'
+  #   restart: unless-stopped
 
   # Tempo (Tracing)
-  tempo:
-    image: grafana/tempo:latest
-    container_name: ai-log-tempo
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: ${HOST_IP:-host.docker.internal}:24224
-        tag: docker.tempo
-        fluentd-async: "true"
-    command: [ "-config.file=/etc/tempo/tempo.yml" ]
-    volumes:
-      - ../infra/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
-      - tempo_data:/var/tempo
-    ports:
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
-      - "3200:3200" # Tempo
-    networks:
-      - ai-log-network
-    restart: unless-stopped
+  # tempo:
+  #   image: grafana/tempo:latest
+  #   container_name: ai-log-tempo
+  #   logging:
+  #     driver: fluentd
+  #     options:
+  #       fluentd-address: ${HOST_IP:-host.docker.internal}:24224
+  #       tag: docker.tempo
+  #       fluentd-async: "true"
+  #   command: [ "-config.file=/etc/tempo/tempo.yml" ]
+  #   volumes:
+  #     - ../infra/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+  #     - tempo_data:/var/tempo
+  #   ports:
+  #     - "4317:4317" # OTLP gRPC
+  #     - "4318:4318" # OTLP HTTP
+  #     - "3200:3200" # Tempo
+  #   networks:
+  #     - ai-log-network
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 256M
+  #         cpus: '0.5'
+  #       reservations:
+  #         memory: 128M
+  #         cpus: '0.25'
+  #   restart: unless-stopped
   # Langfuse (LLM Observability)
   # Note: This docker image is included for self-contained deployment/testing.
   # For production, use Langfuse Cloud (credentials configured via Doppler).

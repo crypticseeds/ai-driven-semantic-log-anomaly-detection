@@ -31,6 +31,8 @@ class ClusteringService:
         sample_size: int | None = None,
         min_cluster_size: int | None = None,
         min_samples: int | None = None,
+        skip_llm: bool = True,
+        max_llm_outliers: int = 5,
         db: Session | None = None,
     ) -> dict[str, Any]:
         """Perform HDBSCAN clustering on log embeddings.
@@ -39,6 +41,8 @@ class ClusteringService:
             sample_size: Optional sample size for large datasets (None = use all)
             min_cluster_size: Override default min_cluster_size from config
             min_samples: Override default min_samples from config
+            skip_llm: Skip LLM analysis for faster clustering (default: True)
+            max_llm_outliers: Max outliers to analyze with LLM (default: 5)
             db: Optional database session
 
         Returns:
@@ -102,33 +106,57 @@ class ClusteringService:
 
             logger.info(f"Clustering {len(vectors_array)} embeddings...")
 
-            # Apply sampling if needed for very large datasets
+            # Performance optimization: aggressive sampling for memory-constrained environments
+            # HDBSCAN memory usage scales with O(n²) for distance matrix
+            max_clustering_size = self.settings.clustering_max_embeddings
+
             if sample_size and len(vectors_array) > sample_size:
                 logger.info(f"Sampling {sample_size} embeddings from {len(vectors_array)} total")
-                indices = random.sample(range(len(vectors_array)), sample_size)
+                indices = random.sample(
+                    range(len(vectors_array)), min(sample_size, len(vectors_array))
+                )
                 vectors_array = vectors_array[indices]
                 log_ids = [log_ids[i] for i in indices]
 
-            # Configure and run HDBSCAN
-            # Build parameters dict, only including max_cluster_size if it's not None
+            if len(vectors_array) > max_clustering_size:
+                logger.warning(
+                    f"Dataset size ({len(vectors_array)}) exceeds memory-safe limit ({max_clustering_size}). "
+                    f"Sampling {max_clustering_size} embeddings to prevent OOM."
+                )
+                indices = random.sample(range(len(vectors_array)), max_clustering_size)
+                vectors_array = vectors_array[indices]
+                log_ids = [log_ids[i] for i in indices]
+
+            # Convert to float32 to reduce memory usage (float64 is default)
+            if self.settings.clustering_use_float32:
+                vectors_array = vectors_array.astype(np.float32)
+
+            # Configure and run HDBSCAN with memory-optimized settings
             hdbscan_params = {
                 "min_cluster_size": min_cluster_size,
                 "min_samples": min_samples,
                 "cluster_selection_epsilon": self.settings.hdbscan_cluster_selection_epsilon,
                 "metric": "euclidean",
                 "cluster_selection_method": "eom",
+                "algorithm": "boruvka_kdtree",  # More memory efficient than "best"
+                "leaf_size": 50,  # Larger leaf size = less memory
+                "core_dist_n_jobs": 1,  # Single thread to limit memory
             }
             # Only add max_cluster_size if it's not None (HDBSCAN handles None as default)
             if self.settings.hdbscan_max_cluster_size is not None:
                 hdbscan_params["max_cluster_size"] = self.settings.hdbscan_max_cluster_size
 
+            logger.info(f"Running HDBSCAN with parameters: {hdbscan_params}")
+            logger.info(f"Dataset shape: {vectors_array.shape}, dtype: {vectors_array.dtype}")
             clusterer = HDBSCAN(**hdbscan_params)
 
             cluster_labels = clusterer.fit_predict(vectors_array)
 
-            # Process results
+            # Process results - ensure cluster_id is Python int, not numpy.int64
             cluster_assignments = {
-                str(log_id): int(cluster_id)
+                str(log_id): int(cluster_id.item())
+                if hasattr(cluster_id, "item")
+                else int(cluster_id)
                 for log_id, cluster_id in zip(log_ids, cluster_labels, strict=True)
             }
 
@@ -145,8 +173,15 @@ class ClusteringService:
             # Store cluster assignments in database
             self._store_cluster_assignments(cluster_assignments, db)
 
-            # Generate LLM reasoning for outliers
-            self._analyze_outliers_with_llm(cluster_assignments, db)
+            # Generate LLM reasoning for outliers (optional, can be slow)
+            if not skip_llm and max_llm_outliers > 0:
+                self._analyze_outliers_with_llm(
+                    cluster_assignments, db, max_outliers=max_llm_outliers
+                )
+            else:
+                logger.info(
+                    f"Skipping LLM analysis (skip_llm={skip_llm}, max_llm_outliers={max_llm_outliers})"
+                )
 
             # Calculate cluster metadata
             cluster_metadata = self._calculate_cluster_metadata(
@@ -223,12 +258,15 @@ class ClusteringService:
             db.rollback()
             raise
 
-    def _analyze_outliers_with_llm(self, cluster_assignments: dict[str, int], db: Session) -> None:
+    def _analyze_outliers_with_llm(
+        self, cluster_assignments: dict[str, int], db: Session, max_outliers: int = 5
+    ) -> None:
         """Generate LLM reasoning for outlier log entries.
 
         Args:
             cluster_assignments: Dict mapping log_id (str) to cluster_id (int)
             db: Database session
+            max_outliers: Maximum number of outliers to analyze (default: 5)
         """
         try:
             # Get all outliers (cluster_id = -1)
@@ -242,7 +280,11 @@ class ClusteringService:
                 logger.info("No outliers to analyze with LLM")
                 return
 
-            logger.info(f"Analyzing {len(outlier_log_ids)} outliers with LLM...")
+            # Limit outliers to analyze
+            outliers_to_analyze = outlier_log_ids[:max_outliers]
+            logger.info(
+                f"Analyzing {len(outliers_to_analyze)} outliers with LLM (of {len(outlier_log_ids)} total)..."
+            )
 
             # Get log entries for outliers
             log_entries = db.query(LogEntry).filter(LogEntry.id.in_(outlier_log_ids)).all()
@@ -292,7 +334,7 @@ class ClusteringService:
             validated_count = 0
             confirmed_count = 0
 
-            for log_id in outlier_log_ids[:20]:  # Limit to 20 to control API costs
+            for log_id in outliers_to_analyze:  # Use limited list
                 log_entry = log_dict.get(log_id)
                 if not log_entry:
                     continue
@@ -449,6 +491,11 @@ class ClusteringService:
                 if cluster_id == -1:
                     continue  # Skip outliers
 
+                # Convert numpy types to Python native types immediately
+                cluster_id_int = (
+                    int(cluster_id.item()) if hasattr(cluster_id, "item") else int(cluster_id)
+                )
+
                 # Get indices for this cluster
                 cluster_indices = np.where(cluster_labels == cluster_id)[0]
                 cluster_vectors = vectors[cluster_indices]
@@ -463,18 +510,18 @@ class ClusteringService:
                 ]  # First 10 as representatives
 
                 metadata = {
-                    "cluster_id": int(cluster_id),
+                    "cluster_id": cluster_id_int,
                     "cluster_size": len(cluster_indices),
                     "centroid": centroid,
                     "representative_logs": representative_logs,
                 }
 
-                cluster_metadata[int(cluster_id)] = metadata
+                cluster_metadata[cluster_id_int] = metadata
 
-                # Store in database
+                # Store in database - ensure cluster_id is Python int
                 existing = (
                     db.query(ClusteringMetadata)
-                    .filter(ClusteringMetadata.cluster_id == cluster_id)
+                    .filter(ClusteringMetadata.cluster_id == cluster_id_int)
                     .first()
                 )
 
@@ -484,7 +531,7 @@ class ClusteringService:
                     existing.representative_logs = metadata["representative_logs"]
                 else:
                     clustering_metadata = ClusteringMetadata(
-                        cluster_id=int(cluster_id),
+                        cluster_id=cluster_id_int,
                         cluster_size=metadata["cluster_size"],
                         cluster_centroid=metadata["centroid"],
                         representative_logs=metadata["representative_logs"],

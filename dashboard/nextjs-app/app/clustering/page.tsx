@@ -108,17 +108,7 @@ export default function ClusteringPage() {
                     </div>
                 ) : (
                     <div className="grid gap-6 lg:grid-cols-2">
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>Cluster Visualization</CardTitle>
-                                <CardDescription>
-                                    HDBSCAN semantic clustering results
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                <ClusterViz />
-                            </CardContent>
-                        </Card>
+                        <ClusterViz />
 
                         <Card>
                             <CardHeader>
@@ -131,9 +121,10 @@ export default function ClusteringPage() {
                                 {clusters.length === 0 ? (
                                     <div className="flex items-center justify-center h-64 text-center p-6">
                                         <div>
-                                            <p className="text-muted-foreground font-medium">No clusters found</p>
+                                            <p className="text-muted-foreground font-medium">No cluster metadata found</p>
                                             <p className="text-sm text-muted-foreground/70 mt-1">
-                                                Run clustering to group similar logs
+                                                Clustering may have been run but metadata is not available.
+                                                Check the &quot;Outlier Analysis&quot; tab for anomaly data.
                                             </p>
                                         </div>
                                     </div>
