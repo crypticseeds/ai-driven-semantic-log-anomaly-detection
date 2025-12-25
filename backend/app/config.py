@@ -94,6 +94,14 @@ class Settings(BaseSettings):
         default="log_embeddings",
         description="Qdrant collection name for log embeddings",
     )
+    qdrant_timeout: int = Field(
+        default=60,
+        description="Qdrant client timeout in seconds",
+    )
+    qdrant_scroll_batch_size: int = Field(
+        default=1000,
+        description="Batch size for Qdrant scroll operations (lower = more reliable over network)",
+    )
 
     # Langfuse
     langfuse_secret_key: str | None = Field(

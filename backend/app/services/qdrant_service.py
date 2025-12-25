@@ -32,6 +32,8 @@ class QdrantService:
         settings = get_settings()
         self.collection_name = settings.qdrant_collection
         self.vector_size = 1536  # text-embedding-3-small dimension
+        self.timeout = settings.qdrant_timeout
+        self.scroll_batch_size = settings.qdrant_scroll_batch_size
 
         if not settings.qdrant_url or not settings.qdrant_api_key:
             logger.warning("Qdrant credentials not configured. Vector storage will not work.")
@@ -42,8 +44,9 @@ class QdrantService:
             self.client = QdrantClient(
                 url=settings.qdrant_url,
                 api_key=settings.qdrant_api_key,
+                timeout=self.timeout,
             )
-            logger.info(f"Connected to Qdrant at {settings.qdrant_url}")
+            logger.info(f"Connected to Qdrant at {settings.qdrant_url} (timeout={self.timeout}s)")
         except Exception as e:
             logger.error(f"Failed to connect to Qdrant: {e}", exc_info=True)
             self.client = None
@@ -290,13 +293,15 @@ class QdrantService:
 
             while True:
                 # Use scroll to retrieve points in batches
+                # Using configurable batch size for better network reliability
                 result, next_offset = self.client.scroll(
                     collection_name=self.collection_name,
-                    limit=10000,  # Qdrant's max scroll limit
+                    limit=self.scroll_batch_size,
                     offset=offset,
                     with_payload=True,
                     with_vectors=True,
                     scroll_filter=filter_conditions,
+                    timeout=self.timeout,
                 )
 
                 all_points.extend(result)

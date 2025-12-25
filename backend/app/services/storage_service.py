@@ -98,6 +98,7 @@ class StorageService:
         """Process a batch of priority logs with embeddings and anomaly detection.
 
         This is the priority path for ERROR/WARN logs.
+        Uses parallel processing for Qdrant storage and anomaly detection.
 
         Args:
             log_ids: List of log entry UUIDs (already saved to PostgreSQL)
@@ -113,6 +114,8 @@ class StorageService:
                 'errors': int
             }
         """
+        import concurrent.futures
+
         from app.services.anomaly_detection_service import anomaly_detection_service
         from app.services.llm_reasoning_service import llm_reasoning_service
         from app.services.qdrant_service import qdrant_service
@@ -134,7 +137,8 @@ class StorageService:
                 messages, use_cache=True
             )
 
-            # Process each log with its embedding
+            # Prepare data for parallel processing
+            items_to_process = []
             for i, (log_id, message, embedding_result) in enumerate(
                 zip(log_ids, messages, embedding_results, strict=False)
             ):
@@ -146,33 +150,51 @@ class StorageService:
                     continue
 
                 results["embeddings_generated"] += 1
-                embedding = embedding_result["embedding"]
                 log_data = log_entries_data[i] if i < len(log_entries_data) else {}
 
-                # Prepare payload for Qdrant
-                payload = {
-                    "level": log_data.get("level"),
-                    "service": log_data.get("service"),
-                    "timestamp": log_data.get("timestamp"),
-                    "pii_redacted": log_data.get("pii_redacted", False),
-                    "embedding_model": embedding_result.get("model"),
-                    "embedding_timestamp": embedding_result.get("timestamp").isoformat()
-                    if embedding_result.get("timestamp")
-                    else None,
-                    "embedding_cost_usd": embedding_result.get("cost_usd", 0.0),
-                    "embedding_tokens": embedding_result.get("tokens", 0),
-                    "embedding_cached": embedding_result.get("cached", False),
-                }
+                items_to_process.append(
+                    {
+                        "log_id": log_id,
+                        "message": message,
+                        "embedding": embedding_result["embedding"],
+                        "embedding_result": embedding_result,
+                        "log_data": log_data,
+                    }
+                )
 
-                # Store in Qdrant
-                success = qdrant_service.store_vector(log_id, embedding, payload)
-                if not success:
-                    logger.warning(f"Failed to store vector for log_id: {log_id}")
-                    results["errors"] += 1
-                    continue
+            # Process Qdrant storage and anomaly detection in parallel
+            def process_single_log(item: dict) -> dict:
+                """Process a single log entry (Qdrant + anomaly detection)."""
+                log_id = item["log_id"]
+                result = {"success": False, "is_anomaly": False, "error": None}
 
-                # Run anomaly detection (Tier 1: IsolationForest)
                 try:
+                    # Prepare payload for Qdrant
+                    embedding_result = item["embedding_result"]
+                    log_data = item["log_data"]
+                    payload = {
+                        "level": log_data.get("level"),
+                        "service": log_data.get("service"),
+                        "timestamp": log_data.get("timestamp"),
+                        "pii_redacted": log_data.get("pii_redacted", False),
+                        "embedding_model": embedding_result.get("model"),
+                        "embedding_timestamp": embedding_result.get("timestamp").isoformat()
+                        if embedding_result.get("timestamp")
+                        else None,
+                        "embedding_cost_usd": embedding_result.get("cost_usd", 0.0),
+                        "embedding_tokens": embedding_result.get("tokens", 0),
+                        "embedding_cached": embedding_result.get("cached", False),
+                    }
+
+                    # Store in Qdrant
+                    success = qdrant_service.store_vector(log_id, item["embedding"], payload)
+                    if not success:
+                        result["error"] = "Failed to store vector"
+                        return result
+
+                    result["success"] = True
+
+                    # Run anomaly detection (Tier 1: IsolationForest)
                     db = next(get_db())
                     try:
                         tier1_result = anomaly_detection_service.score_log_entry(
@@ -180,7 +202,7 @@ class StorageService:
                         )
 
                         if tier1_result and tier1_result.get("is_anomaly", False):
-                            results["anomalies_detected"] += 1
+                            result["is_anomaly"] = True
                             tier1_score = tier1_result.get("anomaly_score", 0.0)
 
                             # Tier 2: LLM validation for high-scoring anomalies
@@ -189,14 +211,44 @@ class StorageService:
                                 and tier1_score >= settings.anomaly_score_threshold
                             ):
                                 self._run_llm_validation(
-                                    log_id, message, log_data, db, llm_reasoning_service
+                                    log_id,
+                                    item["message"],
+                                    log_data,
+                                    db,
+                                    llm_reasoning_service,
                                 )
 
                         db.commit()
                     finally:
                         db.close()
+
                 except Exception as e:
-                    logger.warning(f"Anomaly detection failed for log_id {log_id}: {e}")
+                    result["error"] = str(e)
+                    logger.warning(f"Processing failed for log_id {log_id}: {e}")
+
+                return result
+
+            # Use ThreadPoolExecutor for parallel processing
+            max_workers = min(len(items_to_process), settings.embedding_parallel_batches)
+            if max_workers > 0:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(process_single_log, item): item for item in items_to_process
+                    }
+
+                    for future in concurrent.futures.as_completed(futures):
+                        try:
+                            result = future.result(timeout=30)  # 30s timeout per item
+                            if result.get("is_anomaly"):
+                                results["anomalies_detected"] += 1
+                            if result.get("error"):
+                                results["errors"] += 1
+                        except concurrent.futures.TimeoutError:
+                            results["errors"] += 1
+                            logger.warning("Processing timed out for a log entry")
+                        except Exception as e:
+                            results["errors"] += 1
+                            logger.warning(f"Processing failed: {e}")
 
         except BudgetExceededError as e:
             logger.warning(f"Budget exceeded during batch processing: {e}")

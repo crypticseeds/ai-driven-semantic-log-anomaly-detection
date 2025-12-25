@@ -19,6 +19,7 @@ from uuid import UUID
 from app.config import get_settings
 from app.models.log import ProcessedLogEntry, RawLogEntry
 from app.services.kafka_service import kafka_service
+from app.services.log_aggregator import log_aggregator
 from app.services.metadata_extractor import metadata_extractor
 from app.services.pii_service import pii_service
 from app.services.storage_service import storage_service
@@ -302,10 +303,33 @@ class IngestionService:
         self._batch_processor_running = False
         logger.info("Batch processor loop stopped")
 
+    async def _aggregator_flush_loop(self):
+        """Background loop to flush expired log aggregator buffers."""
+        logger.info("Starting log aggregator flush loop...")
+
+        while self.running:
+            try:
+                # Flush any expired buffers
+                flushed_logs = log_aggregator.flush_expired()
+                for aggregated_log in flushed_logs:
+                    self.process_and_store(aggregated_log)
+
+                await asyncio.sleep(1.0)  # Check every second
+            except Exception as e:
+                logger.error(f"Error in aggregator flush loop: {e}")
+                await asyncio.sleep(2)
+
+        # Final flush on shutdown
+        remaining = log_aggregator.flush_all()
+        for aggregated_log in remaining:
+            self.process_and_store(aggregated_log)
+
+        logger.info("Log aggregator flush loop stopped")
+
     async def start_consuming(self):
         """Start consuming messages from Kafka and processing them."""
         self.running = True
-        logger.info("Starting log ingestion service (two-track pipeline)...")
+        logger.info("Starting log ingestion service (two-track pipeline with log aggregation)...")
         logger.info(
             f"Embedding enabled: {self._settings.embedding_enabled}, "
             f"Priority levels: {self._settings.embedding_log_levels}, "
@@ -315,11 +339,20 @@ class IngestionService:
         # Start batch processor in background
         batch_task = asyncio.create_task(self._batch_processor_loop())
 
+        # Start aggregator flush loop in background
+        aggregator_task = asyncio.create_task(self._aggregator_flush_loop())
+
         def process_message(raw_data: dict):
-            """Process a single message from Kafka."""
+            """Process a single message from Kafka with log aggregation."""
             if not self.running:
                 return
-            self.process_and_store(raw_data)
+
+            # Pass through log aggregator to group multiline logs
+            aggregated_logs = log_aggregator.process(raw_data)
+
+            # Process any complete log entries
+            for log_entry in aggregated_logs:
+                self.process_and_store(log_entry)
 
         def consume_batch():
             """Consume multiple messages (runs in thread pool)."""
@@ -343,10 +376,13 @@ class IngestionService:
                 logger.error(f"Error in consumption loop: {e}")
                 await asyncio.sleep(2)
 
-        # Wait for batch processor to finish
+        # Wait for background tasks to finish
         batch_task.cancel()
+        aggregator_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await batch_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await aggregator_task
 
     def stop(self):
         """Stop the ingestion service."""
