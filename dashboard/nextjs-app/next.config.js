@@ -5,7 +5,9 @@ const { withSentryConfig } = require("@sentry/nextjs");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Your existing Next.js config
+  output: 'standalone',
+  reactStrictMode: true,
+  swcMinify: true,
 };
 
 module.exports = withSentryConfig(

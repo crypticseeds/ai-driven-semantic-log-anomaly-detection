@@ -13,8 +13,8 @@ Sentry.init({
   // Setting this option to true will print useful information to the console while you're setting up Sentry.
   debug: false,
 
-  // Enable logs
-  enableLogs: true,
+  // Configure client integrations
+
 
   // Session Replay
   replaysSessionSampleRate: 0.1, // 10% of sessions
@@ -26,8 +26,6 @@ Sentry.init({
       maskAllText: true,
       blockAllMedia: true,
     }),
-    // Send console.log, console.warn, and console.error calls as logs to Sentry
-    Sentry.consoleLoggingIntegration({ levels: ["log", "warn", "error"] }),
   ],
 });
 

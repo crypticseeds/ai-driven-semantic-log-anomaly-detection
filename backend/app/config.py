@@ -15,7 +15,7 @@ For CI/CD with token:
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,6 +38,26 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @field_validator(
+        "openai_api_key",
+        "openai_budget",
+        "qdrant_url",
+        "qdrant_api_key",
+        "langfuse_secret_key",
+        "langfuse_public_key",
+        "sentry_dsn",
+        "hdbscan_max_cluster_size",
+        "hdbscan_sample_size",
+        "cors_debug_logging",
+        mode="before",
+    )
+    @classmethod
+    def empty_str_to_none(cls, v):
+        """Convert empty strings to None for optional fields."""
+        if v == "" or v is None:
+            return None
+        return v
 
     # Database
     database_url: str = Field(
@@ -73,6 +93,14 @@ class Settings(BaseSettings):
     qdrant_collection: str = Field(
         default="log_embeddings",
         description="Qdrant collection name for log embeddings",
+    )
+    qdrant_timeout: int = Field(
+        default=60,
+        description="Qdrant client timeout in seconds",
+    )
+    qdrant_scroll_batch_size: int = Field(
+        default=1000,
+        description="Batch size for Qdrant scroll operations (lower = more reliable over network)",
     )
 
     # Langfuse
@@ -141,6 +169,28 @@ class Settings(BaseSettings):
         description="Minimum LLM confidence to confirm anomaly (0.0 to 1.0)",
     )
 
+    # Embedding Pipeline Configuration
+    embedding_enabled: bool = Field(
+        default=True,
+        description="Enable embedding generation (can be disabled to speed up ingestion)",
+    )
+    embedding_log_levels: list[str] = Field(
+        default_factory=lambda: ["ERROR", "WARN", "WARNING", "CRITICAL", "FATAL"],
+        description="Log levels that trigger embedding generation (selective processing)",
+    )
+    embedding_batch_size: int = Field(
+        default=50,
+        description="Number of logs to batch before sending to OpenAI (1-2048)",
+    )
+    embedding_batch_timeout_seconds: float = Field(
+        default=5.0,
+        description="Max seconds to wait before processing incomplete batch",
+    )
+    embedding_parallel_batches: int = Field(
+        default=3,
+        description="Number of batches to process in parallel",
+    )
+
     # Application
     app_name: str = Field(
         default="AI Driven Semantic Log Anomaly Detection",
@@ -157,6 +207,29 @@ class Settings(BaseSettings):
     debug: bool = Field(
         default=False,
         description="Debug mode",
+    )
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:3001",
+            "http://0.0.0.0:3000",
+            "http://0.0.0.0:3001",
+        ],
+        description="Allowed CORS origins (comma-separated or JSON array)",
+    )
+    cors_allow_credentials: bool = Field(
+        default=True,
+        description="Allow credentials in CORS requests",
+    )
+    cors_max_age: int = Field(
+        default=3600,
+        description="CORS preflight cache duration in seconds",
+    )
+    cors_debug_logging: bool | None = Field(
+        default=None,
+        description="Enable detailed CORS debug logging (defaults to debug mode)",
     )
 
 

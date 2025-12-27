@@ -1,13 +1,13 @@
 """Log search and retrieval API endpoints."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.db.postgres import AnomalyResult, ClusteringMetadata, LogEntry
@@ -16,7 +16,6 @@ from app.observability.metrics import http_requests_total
 from app.services.anomaly_detection_service import anomaly_detection_service
 from app.services.clustering_service import clustering_service
 from app.services.embedding_service import BudgetExceededError, embedding_service
-from app.services.pii_service import pii_service
 from app.services.qdrant_service import qdrant_service
 
 router = APIRouter(prefix="/api/v1/logs", tags=["logs"])
@@ -38,6 +37,9 @@ async def search_logs(
         float | None,
         Query(ge=0.0, le=1.0, description="Minimum similarity score for semantic search"),
     ] = None,
+    is_anomaly: Annotated[
+        bool | None, Query(description="Filter by anomaly status (true/false)")
+    ] = None,
     db: Session = Depends(get_db),
 ) -> JSONResponse:
     """Search logs with optional filters and semantic search support.
@@ -55,6 +57,7 @@ async def search_logs(
         offset: Offset for pagination
         use_semantic_search: Use semantic search with vector embeddings
         similarity_threshold: Minimum similarity score (0.0-1.0) for semantic search
+        is_anomaly: Filter by anomaly status (true for anomalies only, false for normal only)
         db: Database session
 
     Returns:
@@ -72,12 +75,24 @@ async def search_logs(
                 limit=limit,
                 offset=offset,
                 similarity_threshold=similarity_threshold,
+                is_anomaly=is_anomaly,
                 db=db,
             )
 
         # Traditional text-based search
         # Build query filters
         filters = []
+
+        # If filtering by anomaly status, we need to join with AnomalyResult
+        if is_anomaly is not None:
+            # Create a subquery for anomaly filtering to avoid loading IDs into memory
+            anomaly_subquery = (
+                db.query(AnomalyResult.log_entry_id)
+                .filter(AnomalyResult.is_anomaly == is_anomaly)
+                .subquery()
+            )
+            # Apply the subquery filter to the main query
+            filters.append(LogEntry.id.in_(db.query(anomaly_subquery.c.log_entry_id)))
 
         if level:
             filters.append(LogEntry.level == level.upper())
@@ -112,8 +127,9 @@ async def search_logs(
         if filters:
             db_query = db_query.filter(and_(*filters))
 
-        # Order by timestamp descending (newest first)
-        db_query = db_query.order_by(LogEntry.timestamp.desc())
+        # Order by created_at descending (newest ingested first) for real-time monitoring
+        # This ensures recently ingested logs appear first, even if their original timestamp is old
+        db_query = db_query.order_by(LogEntry.created_at.desc())
 
         # Get total count
         total = db_query.count()
@@ -121,22 +137,36 @@ async def search_logs(
         # Apply pagination
         entries = db_query.offset(offset).limit(limit).all()
 
-        # Convert to response format and redact PII from messages
+        # Get anomaly info for all entries
+        entry_ids = [entry.id for entry in entries]
+        anomaly_info_map = {}
+        if entry_ids:
+            anomaly_results = (
+                db.query(AnomalyResult).filter(AnomalyResult.log_entry_id.in_(entry_ids)).all()
+            )
+            anomaly_info_map = {
+                r.log_entry_id: {"is_anomaly": r.is_anomaly, "anomaly_score": r.anomaly_score}
+                for r in anomaly_results
+            }
+
+        # Convert to response format
+        # NOTE: Messages are already PII-redacted during ingestion, no need to re-redact
+        # Re-redacting would cause issues like [EMAIL] becoming [REDACTED]
         results = []
         for entry in entries:
-            # Redact PII from the message field before returning
-            redacted_message, pii_entities = pii_service.redact_pii(entry.message)
-
+            anomaly_info = anomaly_info_map.get(entry.id, {})
             result = {
                 "id": str(entry.id),
                 "timestamp": entry.timestamp.isoformat(),
                 "level": entry.level,
                 "service": entry.service,
-                "message": redacted_message,  # PII-redacted message
+                "message": entry.message,  # Already PII-redacted during ingestion
                 "metadata": entry.log_metadata,
                 "pii_redacted": entry.pii_redacted,
-                "pii_entities_detected": pii_entities,  # PII entities found in this search
+                "pii_entities_detected": {},  # PII entities stored during ingestion (not in current schema)
                 "created_at": entry.created_at.isoformat(),
+                "is_anomaly": anomaly_info.get("is_anomaly", False),
+                "anomaly_score": anomaly_info.get("anomaly_score"),
             }
             results.append(result)
 
@@ -169,6 +199,7 @@ async def _semantic_search(
     limit: int,
     offset: int,
     similarity_threshold: float | None,
+    is_anomaly: bool | None,
     db: Session,
 ) -> JSONResponse:
     """Perform semantic search using Qdrant vector search with hybrid filtering.
@@ -182,6 +213,7 @@ async def _semantic_search(
         limit: Maximum results
         offset: Pagination offset
         similarity_threshold: Minimum similarity score
+        is_anomaly: Filter by anomaly status
         db: Database session
 
     Returns:
@@ -244,6 +276,13 @@ async def _semantic_search(
     # Create a mapping of ID to entry for efficient lookup
     entry_map = {entry.id: entry for entry in entries}
 
+    # Get anomaly info for all entries
+    anomaly_results = db.query(AnomalyResult).filter(AnomalyResult.log_entry_id.in_(log_ids)).all()
+    anomaly_info_map = {
+        r.log_entry_id: {"is_anomaly": r.is_anomaly, "anomaly_score": r.anomaly_score}
+        for r in anomaly_results
+    }
+
     # Build results in the same order as vector search results
     results = []
     for vector_result in vector_results:
@@ -251,6 +290,14 @@ async def _semantic_search(
         entry = entry_map.get(log_id)
 
         if not entry:
+            continue
+
+        # Get anomaly info for this entry
+        anomaly_info = anomaly_info_map.get(log_id, {})
+        entry_is_anomaly = anomaly_info.get("is_anomaly", False)
+
+        # Apply anomaly filter if specified
+        if is_anomaly is not None and entry_is_anomaly != is_anomaly:
             continue
 
         # Apply time filters if specified
@@ -270,20 +317,20 @@ async def _semantic_search(
             except ValueError:
                 pass
 
-        # Redact PII from the message field before returning
-        redacted_message, pii_entities = pii_service.redact_pii(entry.message)
-
+        # NOTE: Messages are already PII-redacted during ingestion, no need to re-redact
         result = {
             "id": str(entry.id),
             "timestamp": entry.timestamp.isoformat(),
             "level": entry.level,
             "service": entry.service,
-            "message": redacted_message,
+            "message": entry.message,  # Already PII-redacted during ingestion
             "metadata": entry.log_metadata,
             "pii_redacted": entry.pii_redacted,
-            "pii_entities_detected": pii_entities,
+            "pii_entities_detected": {},  # PII entities stored during ingestion (not in current schema)
             "created_at": entry.created_at.isoformat(),
             "similarity_score": vector_result["score"],
+            "is_anomaly": entry_is_anomaly,
+            "anomaly_score": anomaly_info.get("anomaly_score"),
         }
         results.append(result)
 
@@ -301,6 +348,161 @@ async def _semantic_search(
     )
 
 
+@router.get("/volume")
+async def get_log_volume(
+    hours: Annotated[int, Query(ge=1, le=24, description="Number of hours to look back")] = 1,
+    bucket_minutes: Annotated[
+        int, Query(ge=1, le=60, description="Time bucket size in minutes")
+    ] = 5,
+    level: Annotated[str | None, Query(description="Filter by log level")] = None,
+    service: Annotated[str | None, Query(description="Filter by service name")] = None,
+    use_ingestion_time: Annotated[
+        bool, Query(description="Use ingestion time (created_at) instead of log timestamp")
+    ] = True,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Get log volume aggregated by time buckets.
+
+    Args:
+        hours: Number of hours to look back (1-24)
+        bucket_minutes: Time bucket size in minutes (1-60)
+        level: Optional filter by log level
+        service: Optional filter by service name
+        use_ingestion_time: If True, filter by when logs were ingested (created_at).
+                           If False, filter by original log timestamp.
+                           Default is True for real-time monitoring.
+        db: Database session
+
+    Returns:
+        JSON response with volume data aggregated by time buckets
+    """
+    try:
+        # Calculate time range
+        end_time = datetime.utcnow()
+        start_time = end_time - timedelta(hours=hours)
+
+        # Choose which timestamp field to filter by
+        # created_at = when log was ingested (useful for real-time monitoring)
+        # timestamp = original log timestamp (useful for historical analysis)
+        time_field = LogEntry.created_at if use_ingestion_time else LogEntry.timestamp
+
+        # Build base query with filters
+        query = db.query(LogEntry).filter(time_field >= start_time, time_field <= end_time)
+
+        if level:
+            query = query.filter(LogEntry.level == level.upper())
+
+        if service:
+            query = query.filter(LogEntry.service.ilike(f"%{service}%"))
+
+        # Use database-side aggregation for better performance
+        # Create time buckets using SQL date_trunc function
+        time_field = LogEntry.created_at if use_ingestion_time else LogEntry.timestamp
+
+        # PostgreSQL date_trunc with custom interval for bucket_minutes
+        # We'll use date_trunc to minute level, then group by floor(minute/bucket_minutes)
+        bucket_query = (
+            db.query(
+                func.date_trunc("minute", time_field).label("minute_bucket"),
+                LogEntry.level,
+                func.count().label("count"),
+            )
+            .filter(time_field >= start_time)
+            .filter(time_field <= end_time)
+        )
+
+        if level:
+            bucket_query = bucket_query.filter(LogEntry.level == level.upper())
+        if service:
+            bucket_query = bucket_query.filter(LogEntry.service.ilike(f"%{service}%"))
+
+        # Group by time bucket and level
+        bucket_results = (
+            bucket_query.group_by(func.date_trunc("minute", time_field), LogEntry.level)
+            .order_by(func.date_trunc("minute", time_field))
+            .all()
+        )
+
+        # Process aggregated results into time buckets
+        bucket_map: dict = {}
+
+        for minute_bucket, log_level, count in bucket_results:
+            # Align to bucket_minutes intervals
+            bucket_minute = (minute_bucket.minute // bucket_minutes) * bucket_minutes
+            bucket_time = minute_bucket.replace(minute=bucket_minute, second=0, microsecond=0)
+
+            if bucket_time not in bucket_map:
+                bucket_map[bucket_time] = {
+                    "count": 0,
+                    "ERROR": 0,
+                    "WARN": 0,
+                    "INFO": 0,
+                    "DEBUG": 0,
+                }
+
+            bucket_map[bucket_time]["count"] += count
+            if log_level in bucket_map[bucket_time]:
+                bucket_map[bucket_time][log_level] += count
+
+        # Generate all time buckets (including empty ones)
+        all_buckets = []
+        bucket_delta = timedelta(minutes=bucket_minutes)
+
+        # Compute the first bucket-aligned timestamp
+        first_aligned_bucket = start_time.replace(second=0, microsecond=0)
+        bucket_minute = (first_aligned_bucket.minute // bucket_minutes) * bucket_minutes
+        first_aligned_bucket = first_aligned_bucket.replace(minute=bucket_minute)
+
+        # If the aligned bucket is before start_time, advance to next bucket
+        if first_aligned_bucket < start_time:
+            first_aligned_bucket += bucket_delta
+
+        bucket_time = first_aligned_bucket
+        while bucket_time <= end_time:
+            if bucket_time in bucket_map:
+                bucket_data = bucket_map[bucket_time]
+                result_data = {
+                    "timestamp": bucket_time.isoformat(),
+                    "count": bucket_data["count"],
+                    "level_breakdown": {
+                        "ERROR": bucket_data["ERROR"],
+                        "WARN": bucket_data["WARN"],
+                        "INFO": bucket_data["INFO"],
+                        "DEBUG": bucket_data["DEBUG"],
+                    },
+                }
+            else:
+                # Empty bucket
+                result_data = {
+                    "timestamp": bucket_time.isoformat(),
+                    "count": 0,
+                    "level_breakdown": {"ERROR": 0, "WARN": 0, "INFO": 0, "DEBUG": 0},
+                }
+
+            all_buckets.append(result_data)
+            bucket_time += bucket_delta
+
+        http_requests_total.labels(method="GET", endpoint="/api/v1/logs/volume", status=200).inc()
+
+        return JSONResponse(
+            content={
+                "volume_data": all_buckets,
+                "total_logs": sum(bucket["count"] for bucket in all_buckets),
+                "time_range": {
+                    "start_time": start_time.isoformat(),
+                    "end_time": end_time.isoformat(),
+                    "hours": hours,
+                    "bucket_minutes": bucket_minutes,
+                },
+                "filters": {"level": level, "service": service},
+            }
+        )
+
+    except Exception as e:
+        http_requests_total.labels(method="GET", endpoint="/api/v1/logs/volume", status=500).inc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving log volume: {str(e)}") from e
+
+
 @router.get("/{log_id}")
 async def get_log(
     log_id: UUID,
@@ -308,7 +510,7 @@ async def get_log(
 ) -> JSONResponse:
     """Get a specific log entry by ID.
 
-    The message field is automatically redacted for PII before being returned.
+    The message field was already redacted for PII during ingestion.
 
     Args:
         log_id: UUID of the log entry
@@ -326,19 +528,17 @@ async def get_log(
             ).inc()
             raise HTTPException(status_code=404, detail="Log entry not found")
 
-        # Redact PII from the message field before returning
-        redacted_message, pii_entities = pii_service.redact_pii(entry.message)
-
+        # NOTE: Messages are already PII-redacted during ingestion, no need to re-redact
         result = {
             "id": str(entry.id),
             "timestamp": entry.timestamp.isoformat(),
             "level": entry.level,
             "service": entry.service,
-            "message": redacted_message,  # PII-redacted message
+            "message": entry.message,  # Already PII-redacted during ingestion
             "raw_log": entry.raw_log,  # Original log (for audit, if authorized)
             "metadata": entry.log_metadata,
             "pii_redacted": entry.pii_redacted,
-            "pii_entities_detected": pii_entities,  # PII entities found in this retrieval
+            "pii_entities_detected": {},  # PII entities stored during ingestion (not in current schema)
             "created_at": entry.created_at.isoformat(),
         }
 
@@ -600,16 +800,14 @@ async def get_outliers(
         for outlier_result in outlier_results:
             log_entry = log_dict.get(outlier_result.log_entry_id)
             if log_entry:
-                # Redact PII from message
-                redacted_message, pii_entities = pii_service.redact_pii(log_entry.message)
-
+                # NOTE: Messages are already PII-redacted during ingestion, no need to re-redact
                 result.append(
                     {
                         "id": str(log_entry.id),
                         "timestamp": log_entry.timestamp.isoformat(),
                         "level": log_entry.level,
                         "service": log_entry.service,
-                        "message": redacted_message,
+                        "message": log_entry.message,  # Already PII-redacted during ingestion
                         "anomaly_score": outlier_result.anomaly_score,
                         "created_at": log_entry.created_at.isoformat(),
                     }

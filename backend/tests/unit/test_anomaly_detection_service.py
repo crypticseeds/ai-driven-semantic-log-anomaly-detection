@@ -42,10 +42,26 @@ class TestAnomalyDetectionService:
             {"id": str(log_id3), "vector": [10.0] * 1536},  # Outlier
         ]
 
+        # Mock log entries with ERROR level
+        mock_log_entries = []
+        for log_id in [log_id1, log_id2, log_id3]:
+            mock_entry = MagicMock()
+            mock_entry.id = log_id
+            mock_entry.level = "ERROR"
+            mock_log_entries.append(mock_entry)
+
         # Mock database
         mock_db = MagicMock()
         mock_get_db.return_value = iter([mock_db])
-        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model.__name__ == "LogEntry":
+                mock_query.filter.return_value.all.return_value = mock_log_entries
+            mock_query.filter.return_value.first.return_value = None
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
 
         service = AnomalyDetectionService()
         result = service.detect_with_isolation_forest(db=mock_db)
@@ -66,9 +82,25 @@ class TestAnomalyDetectionService:
             {"id": str(log_id2), "vector": [0.2] * 1536},
         ]
 
+        # Mock log entries with ERROR level
+        mock_log_entries = []
+        for log_id in [log_id1, log_id2]:
+            mock_entry = MagicMock()
+            mock_entry.id = log_id
+            mock_entry.level = "ERROR"
+            mock_log_entries.append(mock_entry)
+
         mock_db = MagicMock()
         mock_get_db.return_value = iter([mock_db])
-        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model.__name__ == "LogEntry":
+                mock_query.filter.return_value.all.return_value = mock_log_entries
+            mock_query.filter.return_value.first.return_value = None
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
 
         service = AnomalyDetectionService()
         result = service.detect_with_zscore(threshold=3.0, db=mock_db)
@@ -88,9 +120,25 @@ class TestAnomalyDetectionService:
             for i, log_id in enumerate(log_ids)
         ]
 
+        # Mock log entries with ERROR level
+        mock_log_entries = []
+        for log_id in log_ids:
+            mock_entry = MagicMock()
+            mock_entry.id = log_id
+            mock_entry.level = "ERROR"
+            mock_log_entries.append(mock_entry)
+
         mock_db = MagicMock()
         mock_get_db.return_value = iter([mock_db])
-        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model.__name__ == "LogEntry":
+                mock_query.filter.return_value.all.return_value = mock_log_entries
+            mock_query.filter.return_value.first.return_value = None
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
 
         service = AnomalyDetectionService()
         result = service.detect_with_iqr(multiplier=1.5, db=mock_db)
@@ -115,9 +163,23 @@ class TestAnomalyDetectionService:
             {"id": str(uuid4()), "vector": [0.1 + i * 0.01] * 1536} for i in range(10)
         ]
 
+        # Mock log entry with ERROR level (should be flagged as anomaly if statistical anomaly)
+        mock_log_entry = MagicMock()
+        mock_log_entry.level = "ERROR"
+
         mock_db = MagicMock()
         mock_get_db.return_value = iter([mock_db])
-        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        # First query returns log entry, second returns None for AnomalyResult
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model.__name__ == "LogEntry":
+                mock_query.filter.return_value.first.return_value = mock_log_entry
+            else:
+                mock_query.filter.return_value.first.return_value = None
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
 
         service = AnomalyDetectionService()
         result = service.score_log_entry(log_id=log_id, method="IsolationForest", db=mock_db)
@@ -138,3 +200,72 @@ class TestAnomalyDetectionService:
         result = service.score_log_entry(log_id=log_id)
 
         assert result is None
+
+    @patch("app.services.anomaly_detection_service.qdrant_service")
+    @patch("app.services.anomaly_detection_service.get_db")
+    def test_info_logs_not_flagged_as_anomalies(self, mock_get_db, mock_qdrant):
+        """Test that INFO logs are not easily flagged as anomalies.
+
+        INFO logs should require much higher anomaly scores to be flagged,
+        reducing false positives for routine log messages.
+        """
+        log_id_info = uuid4()
+        log_id_error = uuid4()
+
+        # Both logs have similar embeddings (slight outlier)
+        mock_qdrant.get_all_embeddings.return_value = [
+            {"id": str(uuid4()), "vector": [0.1] * 1536},
+            {"id": str(uuid4()), "vector": [0.11] * 1536},
+            {"id": str(uuid4()), "vector": [0.12] * 1536},
+            {"id": str(log_id_info), "vector": [0.5] * 1536},  # Slight outlier - INFO
+            {"id": str(log_id_error), "vector": [0.5] * 1536},  # Same outlier - ERROR
+        ]
+
+        # Mock log entries - one INFO, one ERROR
+        mock_log_entries = [
+            MagicMock(id=uuid4(), level="INFO"),
+            MagicMock(id=uuid4(), level="INFO"),
+            MagicMock(id=uuid4(), level="INFO"),
+            MagicMock(id=log_id_info, level="INFO"),
+            MagicMock(id=log_id_error, level="ERROR"),
+        ]
+
+        mock_db = MagicMock()
+        mock_get_db.return_value = iter([mock_db])
+
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model.__name__ == "LogEntry":
+                mock_query.filter.return_value.all.return_value = mock_log_entries
+            mock_query.filter.return_value.first.return_value = None
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
+
+        service = AnomalyDetectionService()
+        result = service.detect_with_isolation_forest(contamination=0.3, db=mock_db)
+
+        # The service should apply level-based filtering
+        # ERROR logs with same score should be more likely to be flagged than INFO logs
+        assert result["method"] == "IsolationForest"
+        assert "anomalies" in result
+
+        # Collect anomaly log IDs from the result
+        anomaly_ids = [str(anomaly["log_id"]) for anomaly in result["anomalies"]]
+
+        # Assert that the INFO log is not flagged while the ERROR log with the same/similar embedding is flagged
+        # Due to level-based filtering, ERROR logs should be prioritized over INFO logs
+        assert str(log_id_info) not in anomaly_ids, (
+            "INFO log should not be flagged as anomaly due to level-based filtering"
+        )
+
+        # If any anomalies are detected, ERROR logs should be more likely to be flagged than INFO logs
+        if len(anomaly_ids) > 0:
+            # Check if ERROR log is more likely to be flagged than INFO log
+            error_flagged = str(log_id_error) in anomaly_ids
+            info_flagged = str(log_id_info) in anomaly_ids
+
+            # ERROR should be flagged before INFO, or neither should be flagged
+            assert not info_flagged or error_flagged, (
+                "If INFO is flagged, ERROR with same embedding should also be flagged"
+            )

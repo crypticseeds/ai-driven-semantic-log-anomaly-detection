@@ -1,286 +1,197 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
-interface Cluster {
-  cluster_id: number;
-  cluster_size: number;
-  centroid: number[];
-  representative_logs: string[];
-  created_at: string;
-  updated_at: string;
-}
-
-interface ClusteringResult {
-  status: string;
-  n_clusters: number;
-  n_outliers: number;
-  total_logs: number;
-  cluster_metadata: Record<number, Cluster>;
-}
+import { ClusterViz } from "@/components/cluster-viz";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { useState, useEffect } from "react";
+import { api, Cluster, APIError } from "@/lib/api";
+import { Loading } from "@/components/ui/loading";
+import { RefreshCw, Play, AlertCircle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function ClusteringPage() {
-  const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [clusteringResult, setClusteringResult] = useState<ClusteringResult | null>(null);
-  const [selectedCluster, setSelectedCluster] = useState<number | null>(null);
-  const [clusterDetails, setClusterDetails] = useState<any>(null);
+    const [clusters, setClusters] = useState<Cluster[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [running, setRunning] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [selectedCluster, setSelectedCluster] = useState<number | null>(null);
 
-  const apiBaseUrl =
-    process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const fetchClusters = async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const data = await api.getClusters();
+            setClusters(data || []);
+        } catch (err) {
+            const message = err instanceof APIError
+                ? `Failed to load clusters: ${err.statusText}`
+                : "Failed to load clusters. Please check your connection.";
+            setError(message);
+            console.error("Error fetching clusters:", err);
+        } finally {
+            setLoading(false);
+        }
+    };
 
-  const fetchClusters = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch(`${apiBaseUrl}/api/v1/logs/clustering/clusters?limit=100`);
-      if (!response.ok) {
-        throw new Error("Failed to fetch clusters");
-      }
-      const data = await response.json();
-      setClusters(data.clusters || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch clusters");
-    } finally {
-      setLoading(false);
-    }
-  };
+    const runClustering = async () => {
+        try {
+            setRunning(true);
+            setError(null);
+            await api.runClustering();
+            // Refresh clusters after running
+            await fetchClusters();
+        } catch (err) {
+            const message = err instanceof APIError
+                ? `Failed to run clustering: ${err.statusText}`
+                : "Failed to run clustering.";
+            setError(message);
+            console.error("Error running clustering:", err);
+        } finally {
+            setRunning(false);
+        }
+    };
 
-  const runClustering = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch(`${apiBaseUrl}/api/v1/logs/clustering/run`, {
-        method: "POST",
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to run clustering");
-      }
-      const data = await response.json();
-      setClusteringResult(data);
-      // Refresh clusters after clustering
-      await fetchClusters();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to run clustering");
-    } finally {
-      setLoading(false);
-    }
-  };
+    useEffect(() => {
+        fetchClusters();
+    }, []);
 
-  const fetchClusterDetails = async (clusterId: number) => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch(
-        `${apiBaseUrl}/api/v1/logs/clustering/clusters/${clusterId}`
-      );
-      if (!response.ok) {
-        throw new Error("Failed to fetch cluster details");
-      }
-      const data = await response.json();
-      setClusterDetails(data);
-      setSelectedCluster(clusterId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch cluster details");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchOutliers = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch(
-        `${apiBaseUrl}/api/v1/logs/clustering/outliers?limit=50`
-      );
-      if (!response.ok) {
-        throw new Error("Failed to fetch outliers");
-      }
-      const data = await response.json();
-      setClusterDetails({ outliers: data.outliers, total: data.total });
-      setSelectedCluster(-1);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch outliers");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchClusters();
-  }, []);
-
-  return (
-    <div className="container mx-auto p-8">
-      <h1 className="text-3xl font-bold mb-6">HDBSCAN Clustering Dashboard</h1>
-
-      {error && (
-        <div className="mb-4 p-4 bg-red-100 border border-red-400 rounded text-red-800">
-          {error}
-        </div>
-      )}
-
-      <div className="mb-6 space-y-4">
-        <div className="p-4 border rounded">
-          <h2 className="text-xl font-semibold mb-4">Clustering Actions</h2>
-          <div className="space-x-2">
-            <button
-              onClick={runClustering}
-              disabled={loading}
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400"
-            >
-              {loading ? "Running..." : "Run Clustering"}
-            </button>
-            <button
-              onClick={fetchClusters}
-              disabled={loading}
-              className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-400"
-            >
-              Refresh Clusters
-            </button>
-            <button
-              onClick={fetchOutliers}
-              disabled={loading}
-              className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:bg-gray-400"
-            >
-              View Outliers
-            </button>
-          </div>
-        </div>
-
-        {clusteringResult && (
-          <div className="p-4 bg-green-50 border border-green-400 rounded">
-            <h3 className="text-lg font-semibold mb-2">Last Clustering Result</h3>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <p className="text-sm text-gray-600">Clusters Found</p>
-                <p className="text-2xl font-bold">{clusteringResult.n_clusters}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Outliers</p>
-                <p className="text-2xl font-bold text-red-600">
-                  {clusteringResult.n_outliers}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Total Logs</p>
-                <p className="text-2xl font-bold">{clusteringResult.total_logs}</p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 gap-6">
-        <div>
-          <h2 className="text-2xl font-semibold mb-4">
-            Clusters ({clusters.length})
-          </h2>
-          {loading && clusters.length === 0 ? (
-            <p className="text-gray-500">Loading clusters...</p>
-          ) : clusters.length === 0 ? (
-            <p className="text-gray-500">No clusters found. Run clustering first.</p>
-          ) : (
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {clusters.map((cluster) => (
-                <div
-                  key={cluster.cluster_id}
-                  className={`p-4 border rounded cursor-pointer hover:bg-gray-50 ${
-                    selectedCluster === cluster.cluster_id ? "bg-blue-50 border-blue-400" : ""
-                  }`}
-                  onClick={() => fetchClusterDetails(cluster.cluster_id)}
-                >
-                  <div className="flex justify-between items-center">
+    return (
+        <ErrorBoundary>
+            <div className="space-y-6">
+                <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="font-semibold">Cluster {cluster.cluster_id}</h3>
-                      <p className="text-sm text-gray-600">
-                        Size: {cluster.cluster_size} logs
-                      </p>
+                        <h2 className="text-2xl font-bold">Log Clusters</h2>
+                        <p className="text-muted-foreground mt-1">
+                            Visualizing semantic similarity groups. Outliers (Cluster -1) may indicate anomalies.
+                        </p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-xs text-gray-500">
-                        Updated: {new Date(cluster.updated_at).toLocaleDateString()}
-                      </p>
+                    <div className="flex gap-2">
+                        <Button
+                            onClick={runClustering}
+                            disabled={running}
+                            variant="outline"
+                        >
+                            {running ? (
+                                <>
+                                    <Loading className="mr-2" size="sm" />
+                                    Running...
+                                </>
+                            ) : (
+                                <>
+                                    <Play className="mr-2 h-4 w-4" />
+                                    Run Clustering
+                                </>
+                            )}
+                        </Button>
+                        <Button onClick={fetchClusters} variant="outline" size="icon">
+                            <RefreshCw className="h-4 w-4" />
+                        </Button>
                     </div>
-                  </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
 
-        <div>
-          <h2 className="text-2xl font-semibold mb-4">
-            {selectedCluster === -1
-              ? "Outliers"
-              : selectedCluster !== null
-                ? `Cluster ${selectedCluster} Details`
-                : "Cluster Details"}
-          </h2>
-          {loading && !clusterDetails ? (
-            <p className="text-gray-500">Loading details...</p>
-          ) : clusterDetails ? (
-            <div className="p-4 border rounded">
-              {selectedCluster === -1 ? (
-                <div>
-                  <p className="mb-4 text-gray-600">
-                    Total outliers: {clusterDetails.total}
-                  </p>
-                  <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {clusterDetails.outliers?.map((outlier: any, idx: number) => (
-                      <div key={idx} className="p-3 bg-red-50 border border-red-200 rounded">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <p className="font-semibold text-sm">{outlier.service}</p>
-                            <p className="text-xs text-gray-500">{outlier.level}</p>
-                          </div>
-                          <p className="text-xs text-gray-500">
-                            {new Date(outlier.timestamp).toLocaleString()}
-                          </p>
-                        </div>
-                        <p className="text-sm">{outlier.message}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <div className="mb-4">
-                    <p className="text-sm text-gray-600">Cluster Size</p>
-                    <p className="text-2xl font-bold">{clusterDetails.cluster_size}</p>
-                  </div>
-                  <div className="mb-4">
-                    <p className="text-sm text-gray-600 mb-2">Sample Logs</p>
-                    <div className="space-y-2 max-h-96 overflow-y-auto">
-                      {clusterDetails.sample_logs?.map((log: any, idx: number) => (
-                        <div key={idx} className="p-3 bg-gray-50 border rounded">
-                          <div className="flex justify-between items-start mb-2">
-                            <div>
-                              <p className="font-semibold text-sm">{log.service}</p>
-                              <p className="text-xs text-gray-500">{log.level}</p>
+                {error && (
+                    <Card className="border-destructive/50 bg-destructive/5">
+                        <CardContent className="pt-6">
+                            <div className="flex items-center gap-2 text-destructive">
+                                <AlertCircle className="h-4 w-4" />
+                                <span className="text-sm">{error}</span>
                             </div>
-                            <p className="text-xs text-gray-500">
-                              {new Date(log.timestamp).toLocaleString()}
-                            </p>
-                          </div>
-                          <p className="text-sm">{log.message}</p>
-                        </div>
-                      ))}
+                        </CardContent>
+                    </Card>
+                )}
+
+                {loading ? (
+                    <div className="flex items-center justify-center min-h-[400px]">
+                        <Loading text="Loading clusters..." />
                     </div>
-                  </div>
-                </div>
-              )}
+                ) : (
+                    <div className="grid gap-6 lg:grid-cols-2">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Cluster Visualization</CardTitle>
+                                <CardDescription>
+                                    HDBSCAN semantic clustering results
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <ClusterViz />
+                            </CardContent>
+                        </Card>
+
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Clusters</CardTitle>
+                                <CardDescription>
+                                    {clusters.length} cluster{clusters.length !== 1 ? "s" : ""} found
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="p-0">
+                                {clusters.length === 0 ? (
+                                    <div className="flex items-center justify-center h-64 text-center p-6">
+                                        <div>
+                                            <p className="text-muted-foreground font-medium">No clusters found</p>
+                                            <p className="text-sm text-muted-foreground/70 mt-1">
+                                                Run clustering to group similar logs
+                                            </p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <ScrollArea className="h-[400px]">
+                                        <div className="p-4 space-y-2">
+                                            {clusters.map((cluster) => (
+                                                <button
+                                                    key={cluster.cluster_id}
+                                                    onClick={() => setSelectedCluster(
+                                                        selectedCluster === cluster.cluster_id ? null : cluster.cluster_id
+                                                    )}
+                                                    className={`w-full text-left p-3 rounded-lg border transition-all ${
+                                                        selectedCluster === cluster.cluster_id
+                                                            ? "border-primary bg-primary/5"
+                                                            : "border-border hover:bg-muted/50"
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-2">
+                                                            <Badge
+                                                                variant={
+                                                                    cluster.cluster_id === -1
+                                                                        ? "destructive"
+                                                                        : "outline"
+                                                                }
+                                                            >
+                                                                {cluster.cluster_id === -1
+                                                                    ? "Outlier"
+                                                                    : `Cluster ${cluster.cluster_id}`}
+                                                            </Badge>
+                                                            <span className="text-sm text-muted-foreground">
+                                                                {cluster.count} log{cluster.count !== 1 ? "s" : ""}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    {selectedCluster === cluster.cluster_id && cluster.sample_logs && (
+                                                        <div className="mt-3 space-y-1 border-t border-border pt-3">
+                                                            {cluster.sample_logs.slice(0, 3).map((log) => (
+                                                                <div
+                                                                    key={log.id}
+                                                                    className="text-xs text-muted-foreground truncate"
+                                                                >
+                                                                    {log.message}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </ScrollArea>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </div>
+                )}
             </div>
-          ) : (
-            <p className="text-gray-500">Select a cluster to view details</p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+        </ErrorBoundary>
+    );
 }
-
-

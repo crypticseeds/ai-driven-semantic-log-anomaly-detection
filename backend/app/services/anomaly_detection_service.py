@@ -9,11 +9,26 @@ from sklearn.ensemble import IsolationForest
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.postgres import AnomalyResult
+from app.db.postgres import AnomalyResult, LogEntry
 from app.db.session import get_db
 from app.services.qdrant_service import qdrant_service
 
 logger = logging.getLogger(__name__)
+
+# Log level weights for anomaly detection
+# Higher weight = more likely to be flagged as anomaly
+# INFO/DEBUG logs need much higher statistical anomaly scores to be flagged
+LOG_LEVEL_ANOMALY_WEIGHTS = {
+    "ERROR": 1.0,  # Errors are always worth investigating
+    "WARN": 0.8,  # Warnings are often important
+    "WARNING": 0.8,  # Alternative spelling
+    "INFO": 0.3,  # INFO logs need very high scores to be anomalous
+    "DEBUG": 0.2,  # DEBUG logs rarely indicate real anomalies
+    "TRACE": 0.1,  # TRACE logs almost never indicate anomalies
+}
+
+# Threshold multiplier: INFO logs need 3x higher score to be flagged
+DEFAULT_LEVEL_WEIGHT = 0.5
 
 
 class AnomalyDetectionService:
@@ -70,6 +85,10 @@ class AnomalyDetectionService:
             log_ids, vectors = zip(*valid_data, strict=True)
             vectors_array = np.array(vectors)
 
+            # Get log levels for all log IDs to apply level-based filtering
+            log_entries = db.query(LogEntry).filter(LogEntry.id.in_(log_ids)).all()
+            log_level_map = {entry.id: entry.level for entry in log_entries}
+
             # Train IsolationForest
             logger.info(f"Training IsolationForest on {len(vectors_array)} embeddings...")
             isolation_forest = IsolationForest(
@@ -80,12 +99,33 @@ class AnomalyDetectionService:
             predictions = isolation_forest.fit_predict(vectors_array)
             anomaly_scores = isolation_forest.score_samples(vectors_array)
 
+            # Calculate score threshold for level-based filtering
+            # We use the median anomaly score as a baseline
+            median_score = np.median(-anomaly_scores)  # Convert to positive scale
+
             # Process results
             anomalies = []
             for log_id, prediction, score in zip(log_ids, predictions, anomaly_scores, strict=True):
-                is_anomaly = prediction == -1
                 # Normalize score (IsolationForest returns negative scores, lower = more anomalous)
                 normalized_score = -score  # Convert to positive scale
+
+                # Get log level and apply level-based filtering
+                log_level = log_level_map.get(log_id, "INFO").upper()
+                level_weight = LOG_LEVEL_ANOMALY_WEIGHTS.get(log_level, DEFAULT_LEVEL_WEIGHT)
+
+                # Determine if this is truly an anomaly based on both statistical score and log level
+                # For INFO/DEBUG logs, require much higher scores to be flagged
+                statistical_anomaly = prediction == -1
+
+                # Apply level-based threshold: INFO logs need score > median * (1/weight)
+                # This means INFO logs (weight=0.3) need ~3x higher score than ERROR logs
+                level_adjusted_threshold = (
+                    median_score / level_weight if level_weight > 0 else float("inf")
+                )
+                is_anomaly = statistical_anomaly and (
+                    level_weight >= 0.8  # ERROR/WARN always flagged if statistical anomaly
+                    or normalized_score > level_adjusted_threshold  # Others need higher scores
+                )
 
                 # Store or update anomaly result
                 existing = (
@@ -170,6 +210,10 @@ class AnomalyDetectionService:
             log_ids, vectors = zip(*valid_data, strict=True)
             vectors_array = np.array(vectors)
 
+            # Get log levels for all log IDs to apply level-based filtering
+            log_entries = db.query(LogEntry).filter(LogEntry.id.in_(log_ids)).all()
+            log_level_map = {entry.id: entry.level for entry in log_entries}
+
             # Calculate Z-scores for each dimension, then aggregate
             # Method: Calculate mean distance from centroid for each point
             centroid = np.mean(vectors_array, axis=0)
@@ -188,7 +232,21 @@ class AnomalyDetectionService:
             # Find anomalies
             anomalies = []
             for log_id, z_score, distance in zip(log_ids, z_scores, distances, strict=True):
-                is_anomaly = z_score > threshold
+                # Get log level and apply level-based filtering
+                log_level = log_level_map.get(log_id, "INFO").upper()
+                level_weight = LOG_LEVEL_ANOMALY_WEIGHTS.get(log_level, DEFAULT_LEVEL_WEIGHT)
+
+                # Apply level-adjusted threshold
+                # INFO logs (weight=0.3) need ~3x higher z-score than ERROR logs
+                level_adjusted_threshold = (
+                    threshold / level_weight if level_weight > 0 else float("inf")
+                )
+                statistical_anomaly = z_score > threshold
+
+                is_anomaly = statistical_anomaly and (
+                    level_weight >= 0.8  # ERROR/WARN always flagged if statistical anomaly
+                    or z_score > level_adjusted_threshold  # Others need higher scores
+                )
 
                 # Store or update anomaly result
                 existing = (
@@ -271,6 +329,10 @@ class AnomalyDetectionService:
             log_ids, vectors = zip(*valid_data, strict=True)
             vectors_array = np.array(vectors)
 
+            # Get log levels for all log IDs to apply level-based filtering
+            log_entries = db.query(LogEntry).filter(LogEntry.id.in_(log_ids)).all()
+            log_level_map = {entry.id: entry.level for entry in log_entries}
+
             # Calculate distances from centroid
             centroid = np.mean(vectors_array, axis=0)
             distances = np.linalg.norm(vectors_array - centroid, axis=1)
@@ -291,7 +353,7 @@ class AnomalyDetectionService:
             # Find anomalies (points outside bounds)
             anomalies = []
             for log_id, distance in zip(log_ids, distances, strict=True):
-                is_anomaly = distance < lower_bound or distance > upper_bound
+                statistical_anomaly = distance < lower_bound or distance > upper_bound
 
                 # Calculate anomaly score (distance from nearest bound)
                 if distance < lower_bound:
@@ -300,6 +362,21 @@ class AnomalyDetectionService:
                     score = (distance - upper_bound) / iqr if iqr > 0 else 0
                 else:
                     score = 0.0
+
+                # Get log level and apply level-based filtering
+                log_level = log_level_map.get(log_id, "INFO").upper()
+                level_weight = LOG_LEVEL_ANOMALY_WEIGHTS.get(log_level, DEFAULT_LEVEL_WEIGHT)
+
+                # Apply level-adjusted threshold for IQR score
+                # INFO logs need higher IQR scores to be flagged
+                level_adjusted_score_threshold = (
+                    1.0 / level_weight if level_weight > 0 else float("inf")
+                )
+
+                is_anomaly = statistical_anomaly and (
+                    level_weight >= 0.8  # ERROR/WARN always flagged if statistical anomaly
+                    or score > level_adjusted_score_threshold  # Others need higher scores
+                )
 
                 # Store or update anomaly result
                 existing = (
@@ -378,6 +455,15 @@ class AnomalyDetectionService:
 
             vector = np.array(embedding_data["vector"])
 
+            # Get log level for this entry
+            log_entry = db.query(LogEntry).filter(LogEntry.id == log_id).first()
+            if not log_entry:
+                logger.warning(f"Log entry not found for log_id: {log_id}")
+                return None
+
+            log_level = log_entry.level.upper() if log_entry.level else "INFO"
+            level_weight = LOG_LEVEL_ANOMALY_WEIGHTS.get(log_level, DEFAULT_LEVEL_WEIGHT)
+
             # Get all other embeddings for comparison (for statistical methods)
             all_embeddings_data = self.qdrant_service.get_all_embeddings()
             if not all_embeddings_data or len(all_embeddings_data) < 2:
@@ -388,14 +474,28 @@ class AnomalyDetectionService:
                 [emb["vector"] for emb in all_embeddings_data if emb.get("vector")]
             )
 
+            statistical_anomaly = False
+            normalized_score = 0.0
+
             if method == "IsolationForest":
                 # Train on all data including this point
                 isolation_forest = IsolationForest(contamination=0.1, random_state=42)
                 all_vectors_with_new = np.vstack([all_vectors, vector.reshape(1, -1)])
                 predictions = isolation_forest.fit_predict(all_vectors_with_new)
                 score = isolation_forest.score_samples(vector.reshape(1, -1))[0]
-                is_anomaly = bool(predictions[-1] == -1)
+                statistical_anomaly = bool(predictions[-1] == -1)
                 normalized_score = -score
+
+                # Calculate median score for level-based threshold
+                all_scores = -isolation_forest.score_samples(all_vectors)
+                median_score = float(np.median(all_scores))
+                level_adjusted_threshold = (
+                    median_score / level_weight if level_weight > 0 else float("inf")
+                )
+
+                is_anomaly = statistical_anomaly and (
+                    level_weight >= 0.8 or normalized_score > level_adjusted_threshold
+                )
 
             elif method == "Z-score":
                 centroid = np.mean(all_vectors, axis=0)
@@ -406,7 +506,15 @@ class AnomalyDetectionService:
                     return None
                 z_score = abs((distance - mean_distance) / std_distance)
                 normalized_score = z_score
-                is_anomaly = bool(z_score > 3.0)
+                threshold = 3.0
+                statistical_anomaly = bool(z_score > threshold)
+
+                level_adjusted_threshold = (
+                    threshold / level_weight if level_weight > 0 else float("inf")
+                )
+                is_anomaly = statistical_anomaly and (
+                    level_weight >= 0.8 or z_score > level_adjusted_threshold
+                )
 
             elif method == "IQR":
                 centroid = np.mean(all_vectors, axis=0)
@@ -419,13 +527,20 @@ class AnomalyDetectionService:
                     return None
                 lower_bound = q1 - 1.5 * iqr
                 upper_bound = q3 + 1.5 * iqr
-                is_anomaly = bool(distance < lower_bound or distance > upper_bound)
+                statistical_anomaly = bool(distance < lower_bound or distance > upper_bound)
                 if distance < lower_bound:
                     normalized_score = (lower_bound - distance) / iqr
                 elif distance > upper_bound:
                     normalized_score = (distance - upper_bound) / iqr
                 else:
                     normalized_score = 0.0
+
+                level_adjusted_score_threshold = (
+                    1.0 / level_weight if level_weight > 0 else float("inf")
+                )
+                is_anomaly = statistical_anomaly and (
+                    level_weight >= 0.8 or normalized_score > level_adjusted_score_threshold
+                )
 
             else:
                 logger.error(f"Unknown detection method: {method}")

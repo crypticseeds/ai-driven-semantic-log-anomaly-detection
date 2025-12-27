@@ -132,6 +132,7 @@ Two-tier detection pipeline combining fast statistical methods with LLM validati
 
 - **Tier 1**: IsolationForest, Z-score, and IQR methods for real-time detection
 - **Tier 2**: LLM semantic validation for high-scoring anomalies to reduce false positives
+- **Log-Level Awareness**: Weighted scoring based on log severity—ERROR/WARN logs are prioritized while INFO/DEBUG logs require significantly higher anomaly scores, reducing false positives from routine messages
 
 ### Semantic Clustering
 

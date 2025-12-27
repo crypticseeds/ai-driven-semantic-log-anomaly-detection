@@ -221,6 +221,11 @@ dashboard/nextjs-app/node_modules/
 dashboard/nextjs-app/.vercel/
 dashboard/nextjs-app/.turbo/
 dashboard/nextjs-app/.env*.local
+!dashboard/nextjs-app/lib/
+
+# TypeScript build artifacts
+**/tsconfig.tsbuildinfo
+
 
 # Database
 *.db
@@ -239,6 +244,9 @@ Thumbs.db
 *.swp
 *.swo
 *~
+.agent/
+.kiro/
+
 
 # UV virtual environment (if using local venv)
 .venv/
@@ -266,9 +274,17 @@ infra/prometheus/data/
 # Tempo
 infra/tempo/data/
 OPENAI_EMBEDDING_INTEGRATION_GUIDE.md
-docs/presidio-configuration.md
+docs/
 verification_guide.md
 API_TESTING_GUIDE.md
 
 # Postman
 postman/
+
+PERFORMANCE_ANALYSIS.md
+scripts/emergency_recovery.sh
+scripts/monitor_system.sh
+scripts/recover_system.sh
+
+observations.md
+scrapbook.md
