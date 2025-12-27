@@ -109,48 +109,50 @@ export function ClusterViz() {
             <div className="text-sm font-semibold text-muted-foreground mb-4">
                 Semantic Clusters (HDBSCAN)
             </div>
-            <ResponsiveContainer width="100%" height="calc(100% - 2rem)">
-                <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                    <XAxis
-                        type="number"
-                        dataKey="x"
-                        name="Dimension 1"
-                        tick={false}
-                        axisLine={false}
-                    />
-                    <YAxis
-                        type="number"
-                        dataKey="y"
-                        name="Dimension 2"
-                        tick={false}
-                        axisLine={false}
-                    />
-                    <ZAxis
-                        type="number"
-                        dataKey="z"
-                        range={[60, 400]}
-                        name="Density"
-                    />
-                    <Tooltip
-                        cursor={{ strokeDasharray: "3 3" }}
-                        contentStyle={{
-                            backgroundColor: "hsl(var(--card))",
-                            borderColor: "hsl(var(--border))",
-                            borderRadius: "6px",
-                        }}
-                    />
-                    {Object.entries(clusterGroups).map(([clusterId, points]) => (
-                        <Scatter
-                            key={clusterId}
-                            name={clusterId === "-1" ? "Outlier" : `Cluster ${clusterId}`}
-                            data={points}
-                            fill={COLORS[clusterId] || "hsl(var(--muted-foreground))"}
-                            shape="circle"
+            <div style={{ height: 'calc(100% - 2rem)' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                    <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                        <XAxis
+                            type="number"
+                            dataKey="x"
+                            name="Dimension 1"
+                            tick={false}
+                            axisLine={false}
                         />
-                    ))}
-                    <Legend />
-                </ScatterChart>
-            </ResponsiveContainer>
+                        <YAxis
+                            type="number"
+                            dataKey="y"
+                            name="Dimension 2"
+                            tick={false}
+                            axisLine={false}
+                        />
+                        <ZAxis
+                            type="number"
+                            dataKey="z"
+                            range={[60, 400]}
+                            name="Density"
+                        />
+                        <Tooltip
+                            cursor={{ strokeDasharray: "3 3" }}
+                            contentStyle={{
+                                backgroundColor: "hsl(var(--card))",
+                                borderColor: "hsl(var(--border))",
+                                borderRadius: "6px",
+                            }}
+                        />
+                        {Object.entries(clusterGroups).map(([clusterId, points]) => (
+                            <Scatter
+                                key={clusterId}
+                                name={clusterId === "-1" ? "Outlier" : `Cluster ${clusterId}`}
+                                data={points}
+                                fill={COLORS[clusterId] || "hsl(var(--muted-foreground))"}
+                                shape="circle"
+                            />
+                        ))}
+                        <Legend />
+                    </ScatterChart>
+                </ResponsiveContainer>
+            </div>
         </div>
     );
 }

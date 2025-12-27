@@ -30,7 +30,7 @@ describe('Environment Configuration Usage Properties', () => {
         it('should prioritize NEXT_PUBLIC_API_URL when explicitly set', async () => {
             // Property: Explicit environment variables should take highest priority
             process.env.NEXT_PUBLIC_API_URL = 'http://explicit-api.example.com:8080';
-            process.env.NODE_ENV = 'development';
+            (process.env as any).NODE_ENV = 'development';
 
             const { getAppConfig } = await import('./config');
             const config = getAppConfig();
@@ -41,7 +41,7 @@ describe('Environment Configuration Usage Properties', () => {
         it('should auto-detect API URL from browser hostname when env var not set', async () => {
             // Property: Auto-detection should work when explicit config is missing
             delete process.env.NEXT_PUBLIC_API_URL;
-            process.env.NODE_ENV = 'development';
+            (process.env as any).NODE_ENV = 'development';
 
             // Mock window.location for browser environment
             Object.defineProperty(window, 'location', {
@@ -61,7 +61,7 @@ describe('Environment Configuration Usage Properties', () => {
         it('should use server-side defaults when running on server', async () => {
             // Property: Server-side rendering should have appropriate defaults
             delete process.env.NEXT_PUBLIC_API_URL;
-            process.env.NODE_ENV = 'development';
+            (process.env as any).NODE_ENV = 'development';
 
             // Mock server-side environment (no window)
             const originalWindow = global.window;
@@ -88,9 +88,9 @@ describe('Environment Configuration Usage Properties', () => {
 
             for (const envConfig of envConfigs) {
                 if (envConfig.nodeEnv) {
-                    process.env.NODE_ENV = envConfig.nodeEnv;
+                    (process.env as any).NODE_ENV = envConfig.nodeEnv;
                 } else {
-                    delete process.env.NODE_ENV;
+                    delete (process.env as any).NODE_ENV;
                 }
 
                 vi.resetModules();
@@ -105,7 +105,7 @@ describe('Environment Configuration Usage Properties', () => {
         it('should validate configuration and log appropriate messages', async () => {
             // Property: Configuration validation should provide helpful feedback
             process.env.NEXT_PUBLIC_API_URL = 'invalid-url';
-            process.env.NODE_ENV = 'development';
+            (process.env as any).NODE_ENV = 'development';
 
             const { validateConfig } = await import('./config');
             validateConfig();
@@ -120,7 +120,7 @@ describe('Environment Configuration Usage Properties', () => {
         it('should detect mixed content issues in configuration', async () => {
             // Property: Security issues should be detected and warned about
             process.env.NEXT_PUBLIC_API_URL = 'http://api.example.com';
-            process.env.NODE_ENV = 'development';
+            (process.env as any).NODE_ENV = 'development';
 
             // Mock HTTPS frontend
             Object.defineProperty(window, 'location', {
@@ -185,7 +185,7 @@ describe('Environment Configuration Usage Properties', () => {
 
         it('should provide comprehensive environment information', async () => {
             // Property: Environment introspection should be complete and accurate
-            process.env.NODE_ENV = 'development';
+            (process.env as any).NODE_ENV = 'development';
 
             // Mock browser environment
             Object.defineProperty(window, 'location', {
@@ -216,7 +216,7 @@ describe('Environment Configuration Usage Properties', () => {
 
         it('should handle server-side environment information correctly', async () => {
             // Property: Server-side environment detection should work without browser APIs
-            process.env.NODE_ENV = 'production';
+            (process.env as any).NODE_ENV = 'production';
 
             // Mock server-side environment
             const originalWindow = global.window;
@@ -246,7 +246,7 @@ describe('Environment Configuration Usage Properties', () => {
             const environments = ['development', 'production', 'test'];
 
             for (const env of environments) {
-                process.env.NODE_ENV = env;
+                (process.env as any).NODE_ENV = env;
                 process.env.NEXT_PUBLIC_API_URL = 'http://test.example.com';
 
                 vi.resetModules();
@@ -271,7 +271,7 @@ describe('Environment Configuration Usage Properties', () => {
 
         it('should perform non-blocking API reachability check in development', async () => {
             // Property: Configuration validation should not block application startup
-            process.env.NODE_ENV = 'development';
+            (process.env as any).NODE_ENV = 'development';
             process.env.NEXT_PUBLIC_API_URL = 'http://unreachable.example.com:8000';
 
             // Mock fetch to simulate unreachable API

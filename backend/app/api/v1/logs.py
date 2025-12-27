@@ -441,14 +441,18 @@ async def get_log_volume(
 
         # Generate all time buckets (including empty ones)
         all_buckets = []
-        current_time = start_time
 
-        while current_time <= end_time:
-            # Truncate to bucket boundary
-            bucket_time = current_time.replace(second=0, microsecond=0)
-            bucket_minute = (bucket_time.minute // bucket_minutes) * bucket_minutes
-            bucket_time = bucket_time.replace(minute=bucket_minute)
+        # Compute the first bucket-aligned timestamp
+        first_aligned_bucket = start_time.replace(second=0, microsecond=0)
+        bucket_minute = (first_aligned_bucket.minute // bucket_minutes) * bucket_minutes
+        first_aligned_bucket = first_aligned_bucket.replace(minute=bucket_minute)
 
+        # If the aligned bucket is before start_time, advance to next bucket
+        if first_aligned_bucket < start_time:
+            first_aligned_bucket += bucket_delta
+
+        bucket_time = first_aligned_bucket
+        while bucket_time <= end_time:
             if bucket_time in bucket_map:
                 bucket_data = bucket_map[bucket_time]
                 result_data = {
@@ -470,7 +474,7 @@ async def get_log_volume(
                 }
 
             all_buckets.append(result_data)
-            current_time += bucket_delta
+            bucket_time += bucket_delta
 
         http_requests_total.labels(method="GET", endpoint="/api/v1/logs/volume", status=200).inc()
 

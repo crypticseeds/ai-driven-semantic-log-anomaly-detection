@@ -34,11 +34,15 @@ class TestQdrantService:
         mock_settings.qdrant_url = "https://test.qdrant.io"
         mock_settings.qdrant_api_key = "test-key"
         mock_settings.qdrant_collection = "log_embeddings"
+        mock_settings.qdrant_timeout = 30
+        mock_settings.qdrant_scroll_batch_size = 100
         mock_get_settings.return_value = mock_settings
 
         service = QdrantService()
         assert service.client is not None
-        mock_qdrant_client.assert_called_once_with(url="https://test.qdrant.io", api_key="test-key")
+        mock_qdrant_client.assert_called_once_with(
+            url="https://test.qdrant.io", api_key="test-key", timeout=30
+        )
 
     @patch("app.services.qdrant_service.get_settings")
     @patch("app.services.qdrant_service.QdrantClient")

@@ -140,7 +140,7 @@ describe('CORS Configuration Compliance Properties', () => {
 
             // Mock development environment
             const originalEnv = process.env.NODE_ENV;
-            process.env.NODE_ENV = 'development';
+            (process.env as any).NODE_ENV = 'development';
 
             await api.searchLogs();
 
@@ -154,7 +154,7 @@ describe('CORS Configuration Compliance Properties', () => {
                 })
             );
 
-            process.env.NODE_ENV = originalEnv;
+            (process.env as any).NODE_ENV = originalEnv;
         });
 
         it('should validate API URL configuration for CORS compatibility', async () => {

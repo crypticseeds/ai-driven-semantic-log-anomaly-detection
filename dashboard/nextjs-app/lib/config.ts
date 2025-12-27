@@ -95,6 +95,6 @@ export function getEnvironmentInfo() {
         isServer: typeof window === 'undefined',
         hostname: typeof window !== 'undefined' ? window.location.hostname : 'server',
         protocol: typeof window !== 'undefined' ? window.location.protocol : 'unknown',
-        userAgent: typeof window !== 'undefined' ? navigator.userAgent : 'server',
+        userAgent: typeof window !== 'undefined' && typeof navigator !== 'undefined' ? navigator.userAgent : 'server',
     };
 }

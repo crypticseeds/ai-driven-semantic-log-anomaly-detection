@@ -41,6 +41,7 @@ class StorageService:
         Returns:
             UUID of saved log entry or None if error
         """
+        should_close_db = db is None
         try:
             if db is None:
                 db = next(get_db())
@@ -66,6 +67,9 @@ class StorageService:
             if db:
                 db.rollback()
             return None
+        finally:
+            if should_close_db and db:
+                db.close()
 
     def save_log_entry(
         self, processed_log: ProcessedLogEntry, db: Session | None = None
@@ -89,6 +93,10 @@ class StorageService:
         db = next(get_db())
         try:
             return self.save_log_entry_fast(processed_log, db)
+        except Exception as e:
+            logger.error(f"Failed to save log entry async: {e}")
+            db.rollback()
+            return None
         finally:
             db.close()
 
@@ -115,10 +123,24 @@ class StorageService:
             }
         """
         import concurrent.futures
+        from contextlib import contextmanager
 
         from app.services.anomaly_detection_service import anomaly_detection_service
         from app.services.llm_reasoning_service import llm_reasoning_service
         from app.services.qdrant_service import qdrant_service
+
+        @contextmanager
+        def get_db_session():
+            """Context manager for database sessions."""
+            db = next(get_db())
+            try:
+                yield db
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
         settings = get_settings()
         results = {
@@ -195,8 +217,7 @@ class StorageService:
                     result["success"] = True
 
                     # Run anomaly detection (Tier 1: IsolationForest)
-                    db = next(get_db())
-                    try:
+                    with get_db_session() as db:
                         tier1_result = anomaly_detection_service.score_log_entry(
                             log_id=log_id, method="IsolationForest", db=db
                         )
@@ -217,10 +238,6 @@ class StorageService:
                                     db,
                                     llm_reasoning_service,
                                 )
-
-                        db.commit()
-                    finally:
-                        db.close()
 
                 except Exception as e:
                     result["error"] = str(e)

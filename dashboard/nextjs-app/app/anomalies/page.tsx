@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { Loading } from "@/components/ui/loading";
 import { AlertCircle, RefreshCw } from "lucide-react";
@@ -17,7 +17,7 @@ export default function AnomaliesPage() {
     const [error, setError] = useState<string | null>(null);
     const [detecting, setDetecting] = useState(false);
 
-    const fetchAnomalies = async () => {
+    const fetchAnomalies = useCallback(async () => {
         try {
             setLoading(true);
             setError(null);
@@ -35,7 +35,7 @@ export default function AnomaliesPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     const runDetection = async () => {
         try {
@@ -57,7 +57,7 @@ export default function AnomaliesPage() {
 
     useEffect(() => {
         fetchAnomalies();
-    }, []);
+    }, [fetchAnomalies]);
 
     if (loading) {
         return (

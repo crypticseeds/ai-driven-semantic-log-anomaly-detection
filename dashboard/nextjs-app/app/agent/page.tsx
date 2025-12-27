@@ -62,7 +62,7 @@ export default function AgentPage() {
                                 placeholder="Enter log ID..."
                                 value={logId}
                                 onChange={(e) => setLogId(e.target.value)}
-                                onKeyPress={(e) => {
+                                onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
                                     if (e.key === "Enter") {
                                         handleAnalyze();
                                     }

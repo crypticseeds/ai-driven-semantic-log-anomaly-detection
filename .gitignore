@@ -223,6 +223,9 @@ dashboard/nextjs-app/.turbo/
 dashboard/nextjs-app/.env*.local
 !dashboard/nextjs-app/lib/
 
+# TypeScript build artifacts
+**/tsconfig.tsbuildinfo
+
 
 # Database
 *.db
@@ -271,18 +274,15 @@ infra/prometheus/data/
 # Tempo
 infra/tempo/data/
 OPENAI_EMBEDDING_INTEGRATION_GUIDE.md
-docs/presidio-configuration.md
+docs/
 verification_guide.md
 API_TESTING_GUIDE.md
 
 # Postman
 postman/
 
-docs/
-README.md
 PERFORMANCE_ANALYSIS.md
 scripts/emergency_recovery.sh
-.gitignore
 scripts/monitor_system.sh
 scripts/recover_system.sh
 

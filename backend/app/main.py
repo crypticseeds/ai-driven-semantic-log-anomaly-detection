@@ -25,6 +25,38 @@ from app.services.ingestion_service import ingestion_service
 from app.services.kafka_service import kafka_service
 from app.services.qdrant_service import qdrant_service
 
+# Development origin regex pattern for CORS
+DEVELOPMENT_ORIGIN_REGEX = r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+):\d+"
+
+# Sensitive header names to sanitize in logs
+SENSITIVE_HEADERS = {
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "proxy-authorization",
+    "x-csrf-token",
+}
+
+
+def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Sanitize sensitive headers for logging.
+
+    Args:
+        headers: Dictionary of headers
+
+    Returns:
+        Dictionary with sensitive headers masked
+    """
+    sanitized = {}
+    for key, value in headers.items():
+        key_lower = key.lower()
+        if key_lower in SENSITIVE_HEADERS or "token" in key_lower or "secret" in key_lower:
+            sanitized[key] = "REDACTED"
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
 settings = get_settings()
 
 # Initialize Sentry SDK before FastAPI app
@@ -106,7 +138,7 @@ if settings.debug:
             cors_origins.append(origin)
 
     # Enhanced regex for development IPs (local network + Docker)
-    origin_regex = r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+):\d+"
+    origin_regex = DEVELOPMENT_ORIGIN_REGEX
 
     if cors_debug_enabled:
         logger.info(f"CORS Debug Mode: Allowing {len(cors_origins)} origins: {cors_origins}")
@@ -177,7 +209,7 @@ async def cors_debug_middleware(request: Request, call_next):
             # Check regex pattern for development
             import re
 
-            pattern = r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+):\d+"
+            pattern = DEVELOPMENT_ORIGIN_REGEX
             is_allowed = bool(re.match(pattern, origin))
 
         if not is_allowed:
@@ -189,7 +221,9 @@ async def cors_debug_middleware(request: Request, call_next):
     # Log preflight requests
     if method == "OPTIONS" and cors_debug_enabled:
         logger.info(f"CORS Preflight: {request.url.path} from {origin}")
-        logger.info(f"CORS Preflight Headers: {dict(request.headers)}")
+        # Sanitize sensitive headers before logging
+        sanitized_headers = _sanitize_headers(dict(request.headers))
+        logger.info(f"CORS Preflight Headers: {sanitized_headers}")
 
     # Process the request
     response = await call_next(request)
@@ -206,7 +240,7 @@ async def cors_debug_middleware(request: Request, call_next):
             if settings.debug:
                 import re
 
-                pattern = r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+):\d+"
+                pattern = DEVELOPMENT_ORIGIN_REGEX
                 regex_allowed = bool(re.match(pattern, origin))
 
             response.headers["X-Origin-Allowed"] = str(explicit_allowed or regex_allowed).lower()
@@ -230,16 +264,22 @@ app.include_router(agent_router)
 
 
 @app.get("/health")
-async def healthcheck():
+async def healthcheck(request: Request):
     """Health check endpoint."""
     http_requests_total.labels(method="GET", endpoint="/health", status=200).inc()
-    return JSONResponse(
-        content={
-            "status": "healthy",
-            "service": settings.app_name,
-            "version": settings.app_version,
-        }
-    )
+
+    response_content = {
+        "status": "healthy",
+        "service": settings.app_name,
+        "version": settings.app_version,
+    }
+
+    # Only include headers in development mode and sanitize them
+    if settings.debug:
+        sanitized_headers = _sanitize_headers(dict(request.headers))
+        response_content["debug_headers"] = sanitized_headers
+
+    return JSONResponse(content=response_content)
 
 
 @app.get("/health/kafka")
@@ -283,7 +323,7 @@ async def cors_diagnostic(request: Request):
             # Check regex pattern for development
             import re
 
-            pattern = r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+):\d+"
+            pattern = DEVELOPMENT_ORIGIN_REGEX
             if re.match(pattern, origin):
                 origin_allowed = True
                 origin_method = "regex"
@@ -355,7 +395,7 @@ async def cors_diagnostic(request: Request):
                     + "health/cors",
                 ],
             },
-            "headers_received": dict(request.headers),
+            "headers_received": _sanitize_headers(dict(request.headers)),
         }
     )
 

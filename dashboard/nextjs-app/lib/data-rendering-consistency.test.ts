@@ -300,20 +300,22 @@ describe('Data Rendering Consistency Properties', () => {
             // Verify large numbers are handled correctly
             expect(result.total_logs).toBe(999999);
             expect(result.volume_data[0].count).toBe(999999);
-            expect(result.volume_data[0].level_breakdown.ERROR).toBe(123456);
+            expect(result.volume_data[0].level_breakdown?.ERROR).toBe(123456);
             
             // Verify zero values are handled correctly
             expect(result.volume_data[1].count).toBe(0);
-            expect(result.volume_data[1].level_breakdown.ERROR).toBe(0);
+            expect(result.volume_data[1].level_breakdown?.ERROR).toBe(0);
             
             // Verify all numeric values are actually numbers, not strings
             expect(typeof result.total_logs).toBe('number');
             result.volume_data.forEach(dataPoint => {
                 expect(typeof dataPoint.count).toBe('number');
-                expect(typeof dataPoint.level_breakdown.ERROR).toBe('number');
-                expect(typeof dataPoint.level_breakdown.WARN).toBe('number');
-                expect(typeof dataPoint.level_breakdown.INFO).toBe('number');
-                expect(typeof dataPoint.level_breakdown.DEBUG).toBe('number');
+                if (dataPoint.level_breakdown) {
+                    expect(typeof dataPoint.level_breakdown.ERROR).toBe('number');
+                    expect(typeof dataPoint.level_breakdown.WARN).toBe('number');
+                    expect(typeof dataPoint.level_breakdown.INFO).toBe('number');
+                    expect(typeof dataPoint.level_breakdown.DEBUG).toBe('number');
+                }
             });
         });
 
@@ -401,7 +403,7 @@ describe('Data Rendering Consistency Properties', () => {
 
                 try {
                     await api.getLogVolume();
-                    expect.fail(`Should have thrown error for status ${scenario.status}`);
+                    throw new Error(`Should have thrown error for status ${scenario.status}`);
                 } catch (error: any) {
                     // Verify error structure is consistent for APIError
                     expect(error.name).toBe('APIError');

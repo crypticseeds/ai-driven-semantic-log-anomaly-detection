@@ -113,7 +113,7 @@ describe('Error State Handling Properties', () => {
         it('should provide detailed error context in development mode', async () => {
             // Property: Development mode should provide enhanced error information
             const originalEnv = process.env.NODE_ENV;
-            process.env.NODE_ENV = 'development';
+            (process.env as any).NODE_ENV = 'development';
 
             const errorResponse = {
                 status: 500,
@@ -148,7 +148,7 @@ describe('Error State Handling Properties', () => {
                 expect(console.error).toHaveBeenCalled();
             }
 
-            process.env.NODE_ENV = originalEnv;
+            (process.env as any).NODE_ENV = originalEnv;
         });
 
         it('should handle malformed error responses gracefully', async () => {

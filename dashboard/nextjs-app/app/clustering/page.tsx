@@ -10,7 +10,6 @@ import { Loading } from "@/components/ui/loading";
 import { RefreshCw, Play, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { LogRow } from "@/components/log-explorer/log-row";
 
 export default function ClusteringPage() {
     const [clusters, setClusters] = useState<Cluster[]>([]);

@@ -72,10 +72,10 @@ function getErrorType(error: Error | string | null): ErrorType {
     if (lowerMessage.includes('timeout') || lowerMessage.includes('timed out')) {
         return 'timeout';
     }
-    if (lowerMessage.includes('server') || lowerMessage.includes('5')) {
+    if (lowerMessage.includes('server') || /\b5\d{2}\b/.test(lowerMessage)) {
         return 'server';
     }
-    if (lowerMessage.includes('api') || lowerMessage.includes('response') || lowerMessage.includes('4')) {
+    if (lowerMessage.includes('api') || lowerMessage.includes('response') || /\b4\d{2}\b/.test(lowerMessage)) {
         return 'api';
     }
     if (lowerMessage.includes('data') || lowerMessage.includes('format') || lowerMessage.includes('parse')) {

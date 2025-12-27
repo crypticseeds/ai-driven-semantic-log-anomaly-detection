@@ -226,9 +226,11 @@ describe('API Response Transformation', () => {
         try {
             await api.searchLogs({ limit: 100 });
             expect.fail('Expected API call to throw an error');
-        } catch (error) {
+        } catch (error: unknown) {
             expect(error).toBeInstanceOf(Error);
-            expect(error.message).toContain('API Response Format Error');
+            if (error instanceof Error) {
+                expect(error.message).toContain('API Response Format Error');
+            }
         }
     });
 
@@ -253,12 +255,6 @@ describe('API Response Transformation', () => {
 
         const { api } = await import('./api');
         
-        try {
-            await api.searchLogs({ limit: 100 });
-            expect.fail('Expected API call to throw an error');
-        } catch (error) {
-            expect(error).toBeInstanceOf(Error);
-            expect(error.message).toContain('API Error: 500');
-        }
+        await expect(api.searchLogs({ limit: 100 })).rejects.toThrow(/API Error: 500/);
     });
 });

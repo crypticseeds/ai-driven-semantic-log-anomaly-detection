@@ -42,7 +42,7 @@ export default function SearchPage() {
         }
     };
 
-    const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === "Enter") {
             handleSearch();
         }
@@ -73,7 +73,7 @@ export default function SearchPage() {
                                     placeholder="e.g., connection errors, authentication failures, database timeouts..."
                                     value={query}
                                     onChange={(e) => setQuery(e.target.value)}
-                                    onKeyPress={handleKeyPress}
+                                    onKeyDown={handleKeyDown}
                                     className="pl-10"
                                 />
                             </div>

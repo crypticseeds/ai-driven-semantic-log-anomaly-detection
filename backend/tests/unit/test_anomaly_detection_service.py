@@ -249,3 +249,23 @@ class TestAnomalyDetectionService:
         # ERROR logs with same score should be more likely to be flagged than INFO logs
         assert result["method"] == "IsolationForest"
         assert "anomalies" in result
+
+        # Collect anomaly log IDs from the result
+        anomaly_ids = [str(anomaly["log_id"]) for anomaly in result["anomalies"]]
+
+        # Assert that the INFO log is not flagged while the ERROR log with the same/similar embedding is flagged
+        # Due to level-based filtering, ERROR logs should be prioritized over INFO logs
+        assert str(log_id_info) not in anomaly_ids, (
+            "INFO log should not be flagged as anomaly due to level-based filtering"
+        )
+
+        # If any anomalies are detected, ERROR logs should be more likely to be flagged than INFO logs
+        if len(anomaly_ids) > 0:
+            # Check if ERROR log is more likely to be flagged than INFO log
+            error_flagged = str(log_id_error) in anomaly_ids
+            info_flagged = str(log_id_info) in anomaly_ids
+
+            # ERROR should be flagged before INFO, or neither should be flagged
+            assert not info_flagged or error_flagged, (
+                "If INFO is flagged, ERROR with same embedding should also be flagged"
+            )

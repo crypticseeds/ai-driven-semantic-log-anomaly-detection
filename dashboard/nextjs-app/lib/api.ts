@@ -4,13 +4,15 @@
 
 import { getAppConfig, validateConfig } from './config';
 
-
+// Use the new configuration system - initialize before validateApiConfig
+const appConfig = getAppConfig();
+export const API_BASE_URL = appConfig.apiUrl;
+const API_VERSION = 'v1';
 
 /**
  * Validate API configuration and log diagnostics
  */
-const validateApiConfig = () => {
-    const url = API_BASE_URL;
+const validateApiConfig = (url: string) => {
     const isDevelopment = process.env.NODE_ENV === 'development';
     
     if (isDevelopment) {
@@ -40,13 +42,8 @@ const validateApiConfig = () => {
     }
 };
 
-// Use the new configuration system
-const appConfig = getAppConfig();
-export const API_BASE_URL = appConfig.apiUrl;
-const API_VERSION = 'v1';
-
 // Validate configuration on module load
-validateApiConfig();
+validateApiConfig(API_BASE_URL);
 validateConfig();
 
 export class APIError extends Error {
@@ -156,7 +153,7 @@ async function fetchAPI<T>(
 ): Promise<T> {
     const url = `${API_BASE_URL}/api/${API_VERSION}${endpoint}`;
     const isDevelopment = process.env.NODE_ENV === 'development';
-    const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
     const startTime = performance.now();
 
     if (isDevelopment) {
@@ -191,7 +188,10 @@ async function fetchAPI<T>(
             console.log(`[API] Response: ${response.status} ${response.statusText} - ${responseTime.toFixed(2)}ms - Request ID: ${requestId}`);
             
             // Log response headers in development
-            const responseHeaders = Object.fromEntries(response.headers.entries());
+            const responseHeaders: Record<string, string> = {};
+            response.headers.forEach((value, key) => {
+                responseHeaders[key] = value;
+            });
             console.log(`[API] Response headers:`, responseHeaders);
             
             // Log CORS debug headers if present
@@ -530,7 +530,7 @@ export const api = {
     // Health Check with enhanced monitoring
     async healthCheck(): Promise<{ status: string; timestamp: string; responseTime?: number; details?: any }> {
         const startTime = performance.now();
-        const requestId = `health-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const requestId = `health-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
         
         try {
             if (process.env.NODE_ENV === 'development') {
@@ -568,7 +568,13 @@ export const api = {
                     console.error(`[API] Health check failed - ${responseTime.toFixed(2)}ms - Request ID: ${requestId}`, {
                         status: response.status,
                         statusText: response.statusText,
-                        headers: Object.fromEntries(response.headers.entries())
+                        headers: (() => {
+                            const headers: Record<string, string> = {};
+                            response.headers.forEach((value, key) => {
+                                headers[key] = value;
+                            });
+                            return headers;
+                        })()
                     });
                 }
                 
@@ -593,7 +599,7 @@ export const api = {
     // CORS Diagnostics with enhanced monitoring
     async corsCheck(): Promise<any> {
         const startTime = performance.now();
-        const requestId = `cors-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const requestId = `cors-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
         
         try {
             if (process.env.NODE_ENV === 'development') {
@@ -656,7 +662,7 @@ export const api = {
             health: { status: 'unknown', responseTime: 0 },
             cors: { status: 'unknown', responseTime: 0 },
             connectivity: { status: 'unknown', details: '' },
-            overall: { status: 'unhealthy' as const, score: 0 }
+            overall: { status: 'unhealthy' as 'healthy' | 'degraded' | 'unhealthy', score: 0 }
         };
 
         try {

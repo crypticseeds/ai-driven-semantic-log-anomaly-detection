@@ -80,11 +80,14 @@ export function VolumeChart() {
                 errorToSet = "Failed to fetch volume data";
             }
             
-            setError(errorToSet);
-            
-            // Keep existing data on error if we have some
+            // Only set blocking error if we have no existing data
             if (data.length === 0) {
+                setError(errorToSet);
                 setData([]);
+            } else {
+                // Keep existing data and just log the error for non-blocking display
+                console.warn("Volume data fetch failed, keeping existing data:", errorToSet);
+                setError(null); // Clear any previous blocking errors
             }
         } finally {
             setLoading(false);
@@ -114,7 +117,7 @@ export function VolumeChart() {
         );
     }
 
-    if (error) {
+    if (error && data.length === 0) {
         return (
             <div className="h-32 w-full bg-card/30 border-b border-border p-4">
                 <div className="flex items-center justify-between mb-2">

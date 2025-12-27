@@ -5,7 +5,7 @@ import { LogRow } from "./log-row";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle } from "lucide-react";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { api, APIError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
@@ -26,6 +26,9 @@ export function LogFeed({ filters = {} }: LogFeedProps) {
     const [error, setError] = useState<string | null>(null);
     const [refreshing, setRefreshing] = useState(false);
 
+    // Stabilize filters object to prevent unnecessary re-renders
+    const stableFilters = useMemo(() => filters, [filters]);
+
     const fetchLogs = useCallback(async (showRefreshing = false) => {
         try {
             if (showRefreshing) setRefreshing(true);
@@ -33,7 +36,7 @@ export function LogFeed({ filters = {} }: LogFeedProps) {
             setError(null);
 
             const response = await api.searchLogs({
-                ...filters,
+                ...stableFilters,
                 limit: 100,
                 offset: 0,
             });
@@ -66,14 +69,14 @@ export function LogFeed({ filters = {} }: LogFeedProps) {
                     errorType: err?.constructor?.name,
                     errorMessage: err instanceof Error ? err.message : 'Unknown error',
                     errorData: err instanceof APIError ? err.data : undefined,
-                    filters: filters,
+                    filters: stableFilters,
                 });
             }
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [filters]);
+    }, [stableFilters]);
 
     useEffect(() => {
         fetchLogs();
@@ -152,7 +155,7 @@ export function LogFeed({ filters = {} }: LogFeedProps) {
                             <div className="text-4xl mb-4">📋</div>
                             <h3 className="text-lg font-medium text-foreground mb-2">No logs found</h3>
                             <p className="text-sm text-muted-foreground mb-4">
-                                {Object.keys(filters).length > 0 
+                                {Object.keys(stableFilters).length > 0 
                                     ? "No logs match your current filters. Try adjusting your search criteria."
                                     : "No log data is currently available. This could mean there are no logs in the system or they haven't been processed yet."
                                 }

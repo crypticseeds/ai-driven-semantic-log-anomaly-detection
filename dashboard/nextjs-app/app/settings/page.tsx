@@ -1,11 +1,71 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Settings as SettingsIcon, Database, Zap, Shield } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { API_BASE_URL } from "@/lib/api";
+import { API_BASE_URL, api } from "@/lib/api";
+
+function useConnectionStatus() {
+    const [isConnected, setIsConnected] = useState<boolean | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        const checkConnection = async () => {
+            try {
+                setLoading(true);
+                // Try to make a simple health check request
+                const response = await fetch(`${API_BASE_URL}/health`, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                    },
+                });
+                setIsConnected(response.ok);
+            } catch (error) {
+                console.error('Connection check failed:', error);
+                setIsConnected(false);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        checkConnection();
+        
+        // Check connection every 30 seconds
+        const interval = setInterval(checkConnection, 30000);
+        return () => clearInterval(interval);
+    }, []);
+
+    return { isConnected, loading };
+}
 
 export default function SettingsPage() {
+    const { isConnected, loading } = useConnectionStatus();
+
+    const getStatusBadge = () => {
+        if (loading) {
+            return (
+                <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
+                    Checking...
+                </Badge>
+            );
+        }
+        
+        if (isConnected) {
+            return (
+                <Badge variant="outline" className="bg-green-500/10 text-green-600 dark:text-green-400">
+                    Connected
+                </Badge>
+            );
+        }
+        
+        return (
+            <Badge variant="outline" className="bg-red-500/10 text-red-600 dark:text-red-400">
+                Disconnected
+            </Badge>
+        );
+    };
     return (
         <div className="space-y-6">
             <div>
@@ -36,9 +96,7 @@ export default function SettingsPage() {
                         </div>
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-muted-foreground">Status</span>
-                            <Badge variant="outline" className="bg-green-500/10 text-green-600 dark:text-green-400">
-                                Connected
-                            </Badge>
+                            {getStatusBadge()}
                         </div>
                     </CardContent>
                 </Card>
