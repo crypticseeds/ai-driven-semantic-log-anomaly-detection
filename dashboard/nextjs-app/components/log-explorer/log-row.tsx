@@ -36,7 +36,7 @@ export function LogRow({ log }: LogRowProps) {
     const colorClass = LEVEL_COLORS[log.level] || "text-gray-500";
     const bgClass = LEVEL_BG[log.level] || "bg-gray-500/10";
 
-    const hasPII = log.pii_entities && Object.keys(log.pii_entities).length > 0;
+    const hasPII = log.pii_entities_detected && Object.keys(log.pii_entities_detected).length > 0;
     const displayMessage = log.redacted_message || log.message;
 
     return (
@@ -145,7 +145,7 @@ export function LogRow({ log }: LogRowProps) {
                             <>
                                 <span className="text-muted-foreground font-semibold">PII Detected:</span>
                                 <div className="flex flex-wrap gap-1">
-                                    {Object.entries(log.pii_entities || {}).map(([type, count]) => (
+                                    {Object.entries(log.pii_entities_detected || {}).map(([type, count]) => (
                                         <span key={type} className="inline-flex items-center rounded px-2 py-0.5 bg-blue-500/20 text-blue-600 dark:text-blue-400 text-xs">
                                             {type}: {count}
                                         </span>

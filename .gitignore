@@ -288,3 +288,7 @@ scripts/recover_system.sh
 
 observations.md
 scrapbook.md
+scripts/monitor_system.sh
+scripts/recover_system.sh
+PERFORMANCE_ANALYSIS.md
+scripts/emergency_recovery.sh

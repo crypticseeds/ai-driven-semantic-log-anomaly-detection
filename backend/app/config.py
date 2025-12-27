@@ -39,6 +39,22 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @field_validator("embedding_log_levels", mode="before")
+    @classmethod
+    def parse_embedding_log_levels(cls, v):
+        """Parse embedding_log_levels from JSON string or return default."""
+        if v is None or v == "":
+            return ["ERROR", "WARN", "WARNING", "CRITICAL", "FATAL"]
+        if isinstance(v, str):
+            try:
+                import json
+
+                return json.loads(v)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, treat as comma-separated string
+                return [level.strip().upper() for level in v.split(",") if level.strip()]
+        return v
+
     @field_validator(
         "openai_api_key",
         "openai_budget",
@@ -50,6 +66,8 @@ class Settings(BaseSettings):
         "hdbscan_max_cluster_size",
         "hdbscan_sample_size",
         "cors_debug_logging",
+        "clustering_max_embeddings",
+        "clustering_max_llm_outliers",
         mode="before",
     )
     @classmethod
@@ -58,6 +76,20 @@ class Settings(BaseSettings):
         if v == "" or v is None:
             return None
         return v
+
+    @field_validator(
+        "clustering_skip_llm_default",
+        "clustering_use_float32",
+        mode="before",
+    )
+    @classmethod
+    def parse_bool_str(cls, v):
+        """Parse boolean from string (for env vars)."""
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.lower() in ("true", "1", "yes", "on")
+        return bool(v)
 
     # Database
     database_url: str = Field(
@@ -153,6 +185,24 @@ class Settings(BaseSettings):
     hdbscan_sample_size: int | None = Field(
         default=None,
         description="Sample size for large datasets (None = use all data)",
+    )
+
+    # Clustering Performance Settings
+    clustering_max_embeddings: int = Field(
+        default=2000,
+        description="Maximum embeddings to process for clustering (memory safety limit)",
+    )
+    clustering_skip_llm_default: bool = Field(
+        default=True,
+        description="Skip LLM analysis by default for faster clustering",
+    )
+    clustering_max_llm_outliers: int = Field(
+        default=5,
+        description="Maximum outliers to analyze with LLM (0-50)",
+    )
+    clustering_use_float32: bool = Field(
+        default=True,
+        description="Use float32 instead of float64 for embeddings (reduces memory by 50%)",
     )
 
     # Anomaly Detection Thresholds

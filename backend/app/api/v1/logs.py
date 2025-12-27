@@ -556,13 +556,23 @@ async def get_log(
 @router.post("/clustering/run")
 async def run_clustering(
     sample_size: Annotated[
-        int | None, Query(ge=100, description="Sample size for large datasets")
+        int | None,
+        Query(ge=100, description="Sample size for large datasets (default from config)"),
     ] = None,
     min_cluster_size: Annotated[
-        int | None, Query(ge=2, description="Minimum cluster size for HDBSCAN")
+        int | None,
+        Query(ge=2, description="Minimum cluster size for HDBSCAN (default from config)"),
     ] = None,
     min_samples: Annotated[
-        int | None, Query(ge=1, description="Minimum samples for HDBSCAN")
+        int | None, Query(ge=1, description="Minimum samples for HDBSCAN (default from config)")
+    ] = None,
+    skip_llm: Annotated[
+        bool | None,
+        Query(description="Skip LLM analysis for faster clustering (default from config)"),
+    ] = None,
+    max_llm_outliers: Annotated[
+        int | None,
+        Query(ge=0, le=50, description="Max outliers to analyze with LLM (default from config)"),
     ] = None,
     db: Session = Depends(get_db),
 ) -> JSONResponse:
@@ -572,20 +582,40 @@ async def run_clustering(
     Cluster assignments are stored in the AnomalyResult table, and cluster
     metadata is stored in the ClusteringMetadata table.
 
+    All parameters have sensible defaults from config (can be set via Doppler):
+    - CLUSTERING_SKIP_LLM_DEFAULT: Skip LLM by default (true)
+    - CLUSTERING_MAX_LLM_OUTLIERS: Max outliers for LLM (5)
+    - CLUSTERING_MAX_EMBEDDINGS: Max embeddings to process (2000)
+    - HDBSCAN_SAMPLE_SIZE: Default sample size (None = all)
+
     Args:
-        sample_size: Optional sample size for large datasets (default from config)
-        min_cluster_size: Override default min_cluster_size (default from config)
-        min_samples: Override default min_samples (default from config)
+        sample_size: Optional sample size for large datasets
+        min_cluster_size: Override default min_cluster_size
+        min_samples: Override default min_samples
+        skip_llm: Skip LLM analysis (default from CLUSTERING_SKIP_LLM_DEFAULT)
+        max_llm_outliers: Max outliers for LLM (default from CLUSTERING_MAX_LLM_OUTLIERS)
         db: Database session
 
     Returns:
         JSON response with clustering results
     """
+    from app.config import get_settings
+
+    settings = get_settings()
+
+    # Use config defaults if not specified
+    if skip_llm is None:
+        skip_llm = settings.clustering_skip_llm_default
+    if max_llm_outliers is None:
+        max_llm_outliers = settings.clustering_max_llm_outliers
+
     try:
         result = clustering_service.perform_clustering(
             sample_size=sample_size,
             min_cluster_size=min_cluster_size,
             min_samples=min_samples,
+            skip_llm=skip_llm,
+            max_llm_outliers=max_llm_outliers,
             db=db,
         )
 
@@ -808,7 +838,12 @@ async def get_outliers(
                         "level": log_entry.level,
                         "service": log_entry.service,
                         "message": log_entry.message,  # Already PII-redacted during ingestion
+                        "redacted_message": log_entry.message,  # For consistency with frontend
                         "anomaly_score": outlier_result.anomaly_score,
+                        "llm_reasoning": outlier_result.llm_reasoning,
+                        "llm_validated": outlier_result.llm_reasoning is not None,
+                        "detection_method": outlier_result.detection_method,
+                        "hybrid_tier": "tier2" if outlier_result.llm_reasoning else "tier1",
                         "created_at": log_entry.created_at.isoformat(),
                     }
                 )

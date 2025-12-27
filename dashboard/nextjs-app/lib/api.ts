@@ -368,7 +368,13 @@ export interface LogEntry {
     is_anomaly?: boolean;
     metadata?: Record<string, any>;
     redacted_message?: string;
-    pii_entities?: Record<string, number>;
+    llm_reasoning?: string;
+    llm_validated?: boolean;
+    detection_method?: string;
+    hybrid_tier?: 'tier1' | 'tier2';
+    created_at?: string;
+    pii_redacted?: boolean;
+    pii_entities_detected?: Record<string, number>;
 }
 
 export interface LogSearchParams {
@@ -480,7 +486,13 @@ function transformLogSearchResponse(backendResponse: BackendLogSearchResponse): 
                 is_anomaly: typeof log.is_anomaly === 'boolean' ? log.is_anomaly : undefined,
                 metadata: log.metadata && typeof log.metadata === 'object' ? log.metadata : undefined,
                 redacted_message: log.redacted_message && typeof log.redacted_message === 'string' ? log.redacted_message : undefined,
-                pii_entities: log.pii_entities && typeof log.pii_entities === 'object' ? log.pii_entities : undefined,
+                llm_reasoning: log.llm_reasoning && typeof log.llm_reasoning === 'string' ? log.llm_reasoning : undefined,
+                llm_validated: typeof log.llm_validated === 'boolean' ? log.llm_validated : undefined,
+                detection_method: log.detection_method && typeof log.detection_method === 'string' ? log.detection_method : undefined,
+                hybrid_tier: (log.hybrid_tier === 'tier1' || log.hybrid_tier === 'tier2') ? log.hybrid_tier : undefined,
+                created_at: log.created_at && typeof log.created_at === 'string' ? log.created_at : undefined,
+                pii_redacted: typeof log.pii_redacted === 'boolean' ? log.pii_redacted : undefined,
+                pii_entities_detected: log.pii_entities_detected && typeof log.pii_entities_detected === 'object' ? log.pii_entities_detected : undefined,
             };
 
             validatedLogs.push(validatedLog);

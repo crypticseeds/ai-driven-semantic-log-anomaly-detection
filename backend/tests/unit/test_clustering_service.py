@@ -22,6 +22,7 @@ class TestClusteringService:
         mock_settings.hdbscan_cluster_selection_epsilon = 0.0
         mock_settings.hdbscan_max_cluster_size = None
         mock_settings.hdbscan_sample_size = None
+        mock_settings.clustering_max_embeddings = 10000
         mock_get_settings.return_value = mock_settings
 
         service = ClusteringService()
@@ -38,6 +39,7 @@ class TestClusteringService:
         mock_settings.hdbscan_cluster_selection_epsilon = 0.0
         mock_settings.hdbscan_max_cluster_size = None
         mock_settings.hdbscan_sample_size = None
+        mock_settings.clustering_max_embeddings = 10000
         mock_get_settings.return_value = mock_settings
 
         mock_qdrant_service.get_all_embeddings.return_value = []
@@ -63,6 +65,7 @@ class TestClusteringService:
         mock_settings.hdbscan_cluster_selection_epsilon = 0.0
         mock_settings.hdbscan_max_cluster_size = None
         mock_settings.hdbscan_sample_size = None
+        mock_settings.clustering_max_embeddings = 10000  # Add this setting
         mock_get_settings.return_value = mock_settings
 
         # Create mock embeddings
@@ -116,6 +119,7 @@ class TestClusteringService:
         mock_settings.hdbscan_cluster_selection_epsilon = 0.0
         mock_settings.hdbscan_max_cluster_size = None
         mock_settings.hdbscan_sample_size = None
+        mock_settings.clustering_max_embeddings = 10000  # Add this setting
         mock_get_settings.return_value = mock_settings
 
         # Create many mock embeddings
@@ -127,7 +131,7 @@ class TestClusteringService:
 
         # Mock HDBSCAN
         mock_clusterer = MagicMock()
-        mock_clusterer.fit_predict.return_value = np.array([0] * 1000)
+        mock_clusterer.fit_predict.return_value = np.array([0] * 100)  # Match sample size
         mock_hdbscan.return_value = mock_clusterer
 
         service = ClusteringService()
@@ -152,6 +156,7 @@ class TestClusteringService:
         mock_settings.hdbscan_cluster_selection_epsilon = 0.0
         mock_settings.hdbscan_max_cluster_size = None
         mock_settings.hdbscan_sample_size = None
+        mock_settings.clustering_max_embeddings = 10000
         mock_get_settings.return_value = mock_settings
 
         # Embeddings without vectors

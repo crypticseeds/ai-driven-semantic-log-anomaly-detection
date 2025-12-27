@@ -241,7 +241,7 @@ describe('API Response Transformation Properties', () => {
                         is_anomaly: true,
                         metadata: { key: 'value' },
                         redacted_message: 'Redacted test message',
-                        pii_entities: { email: 1, phone: 2 },
+                        pii_entities_detected: { email: 1, phone: 2 },
                     }
                 ],
                 total: 1,
@@ -267,7 +267,7 @@ describe('API Response Transformation Properties', () => {
             expect(log.is_anomaly).toBe(true);
             expect(log.metadata).toEqual({ key: 'value' });
             expect(log.redacted_message).toBe('Redacted test message');
-            expect(log.pii_entities).toEqual({ email: 1, phone: 2 });
+            expect(log.pii_entities_detected).toEqual({ email: 1, phone: 2 });
         });
 
         it('should handle mixed valid and invalid log entries', async () => {

@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Settings as SettingsIcon, Database, Zap, Shield } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
+import { getAppConfig } from "@/lib/config";
 
 function useConnectionStatus() {
     const [isConnected, setIsConnected] = useState<boolean | null>(null);
@@ -37,6 +38,7 @@ function useConnectionStatus() {
 
 export default function SettingsPage() {
     const { isConnected, loading } = useConnectionStatus();
+    const config = getAppConfig();
 
     const getStatusBadge = () => {
         if (loading) {
@@ -86,7 +88,7 @@ export default function SettingsPage() {
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-muted-foreground">API URL</span>
                             <Badge variant="outline">
-                                {API_BASE_URL}
+                                {config.apiUrl}
                             </Badge>
                         </div>
                         <div className="flex items-center justify-between">
