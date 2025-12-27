@@ -73,13 +73,15 @@ export function validateConfig(): void {
             }
         }
         
-        // Check if API URL is reachable (non-blocking)
+        // Non-blocking API reachability check (network-level only)
+        // Note: Using 'no-cors' mode returns opaque responses that resolve even on HTTP errors
+        // This check only detects network-level failures, not HTTP status codes or CORS issues
         if (typeof window !== 'undefined') {
             fetch(`${config.apiUrl}/health`, { 
                 method: 'HEAD',
                 mode: 'no-cors' // Avoid CORS preflight for this check
             }).catch(() => {
-                console.warn(`[Config] API endpoint may not be reachable: ${config.apiUrl}/health`);
+                console.warn(`[Config] API endpoint may be unreachable or CORS/opaque response prevented health validation: ${config.apiUrl}/health`);
             });
         }
     }

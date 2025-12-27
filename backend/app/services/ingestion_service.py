@@ -291,7 +291,7 @@ class IngestionService:
             try:
                 if self._should_process_batch():
                     # Run batch processing in thread pool
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     await loop.run_in_executor(_executor, self._process_priority_batch)
 
                 # Short sleep to check frequently
@@ -364,7 +364,7 @@ class IngestionService:
             except Exception as e:
                 logger.error(f"Error consuming batch: {e}")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # Run consumer in a loop
         while self.running:

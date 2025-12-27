@@ -9,6 +9,9 @@ const appConfig = getAppConfig();
 export const API_BASE_URL = appConfig.apiUrl;
 const API_VERSION = 'v1';
 
+// Lazy initialization flag to avoid module-level validation
+let validated = false;
+
 /**
  * Validate API configuration and log diagnostics
  */
@@ -42,9 +45,16 @@ const validateApiConfig = (url: string) => {
     }
 };
 
-// Validate configuration on module load
-validateApiConfig(API_BASE_URL);
-validateConfig();
+/**
+ * Ensure configuration is validated at runtime when environment is ready
+ */
+const ensureConfigValidated = () => {
+    if (!validated) {
+        validateApiConfig(API_BASE_URL);
+        validateConfig();
+        validated = true;
+    }
+};
 
 export class APIError extends Error {
     constructor(
@@ -151,6 +161,9 @@ async function fetchAPI<T>(
     endpoint: string,
     options?: RequestInit
 ): Promise<T> {
+    // Ensure configuration is validated at runtime
+    ensureConfigValidated();
+    
     const url = `${API_BASE_URL}/api/${API_VERSION}${endpoint}`;
     const isDevelopment = process.env.NODE_ENV === 'development';
     const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
@@ -529,6 +542,9 @@ export interface VolumeResponse {
 export const api = {
     // Health Check with enhanced monitoring
     async healthCheck(): Promise<{ status: string; timestamp: string; responseTime?: number; details?: any }> {
+        // Ensure configuration is validated at runtime
+        ensureConfigValidated();
+        
         const startTime = performance.now();
         const requestId = `health-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
         
@@ -598,6 +614,9 @@ export const api = {
 
     // CORS Diagnostics with enhanced monitoring
     async corsCheck(): Promise<any> {
+        // Ensure configuration is validated at runtime
+        ensureConfigValidated();
+        
         const startTime = performance.now();
         const requestId = `cors-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
         

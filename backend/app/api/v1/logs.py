@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.db.postgres import AnomalyResult, ClusteringMetadata, LogEntry
@@ -84,26 +84,15 @@ async def search_logs(
         filters = []
 
         # If filtering by anomaly status, we need to join with AnomalyResult
-        anomaly_log_ids = None
         if is_anomaly is not None:
-            anomaly_results = (
+            # Create a subquery for anomaly filtering to avoid loading IDs into memory
+            anomaly_subquery = (
                 db.query(AnomalyResult.log_entry_id)
                 .filter(AnomalyResult.is_anomaly == is_anomaly)
-                .all()
+                .subquery()
             )
-            anomaly_log_ids = [r.log_entry_id for r in anomaly_results]
-            if not anomaly_log_ids:
-                # No logs match the anomaly filter
-                return JSONResponse(
-                    content={
-                        "results": [],
-                        "total": 0,
-                        "limit": limit,
-                        "offset": offset,
-                        "has_more": False,
-                        "search_type": "text",
-                    }
-                )
+            # Apply the subquery filter to the main query
+            filters.append(LogEntry.id.in_(db.query(anomaly_subquery.c.log_entry_id)))
 
         if level:
             filters.append(LogEntry.level == level.upper())
@@ -132,10 +121,6 @@ async def search_logs(
         if query:
             # Search in message field
             filters.append(LogEntry.message.ilike(f"%{query}%"))
-
-        # Add anomaly filter if specified
-        if anomaly_log_ids is not None:
-            filters.append(LogEntry.id.in_(anomaly_log_ids))
 
         # Execute query
         db_query = db.query(LogEntry)
@@ -410,21 +395,41 @@ async def get_log_volume(
         if service:
             query = query.filter(LogEntry.service.ilike(f"%{service}%"))
 
-        # For simplicity, we'll fetch all logs and aggregate in Python
-        # In production, you might want to use more sophisticated SQL aggregation
-        logs = query.all()
+        # Use database-side aggregation for better performance
+        # Create time buckets using SQL date_trunc function
+        time_field = LogEntry.created_at if use_ingestion_time else LogEntry.timestamp
 
-        # Create time buckets and aggregate
-        bucket_delta = timedelta(minutes=bucket_minutes)
+        # PostgreSQL date_trunc with custom interval for bucket_minutes
+        # We'll use date_trunc to minute level, then group by floor(minute/bucket_minutes)
+        bucket_query = (
+            db.query(
+                func.date_trunc("minute", time_field).label("minute_bucket"),
+                LogEntry.level,
+                func.count().label("count"),
+            )
+            .filter(time_field >= start_time)
+            .filter(time_field <= end_time)
+        )
+
+        if level:
+            bucket_query = bucket_query.filter(LogEntry.level == level.upper())
+        if service:
+            bucket_query = bucket_query.filter(LogEntry.service.ilike(f"%{service}%"))
+
+        # Group by time bucket and level
+        bucket_results = (
+            bucket_query.group_by(func.date_trunc("minute", time_field), LogEntry.level)
+            .order_by(func.date_trunc("minute", time_field))
+            .all()
+        )
+
+        # Process aggregated results into time buckets
         bucket_map: dict = {}
 
-        for log in logs:
-            # Calculate which bucket this log belongs to
-            # Use the same time field that was used for filtering
-            log_time = log.created_at if use_ingestion_time else log.timestamp
-            bucket_time = log_time.replace(second=0, microsecond=0)
-            bucket_minute = (bucket_time.minute // bucket_minutes) * bucket_minutes
-            bucket_time = bucket_time.replace(minute=bucket_minute)
+        for minute_bucket, log_level, count in bucket_results:
+            # Align to bucket_minutes intervals
+            bucket_minute = (minute_bucket.minute // bucket_minutes) * bucket_minutes
+            bucket_time = minute_bucket.replace(minute=bucket_minute, second=0, microsecond=0)
 
             if bucket_time not in bucket_map:
                 bucket_map[bucket_time] = {
@@ -435,12 +440,13 @@ async def get_log_volume(
                     "DEBUG": 0,
                 }
 
-            bucket_map[bucket_time]["count"] += 1
-            if log.level in bucket_map[bucket_time]:
-                bucket_map[bucket_time][log.level] += 1
+            bucket_map[bucket_time]["count"] += count
+            if log_level in bucket_map[bucket_time]:
+                bucket_map[bucket_time][log_level] += count
 
         # Generate all time buckets (including empty ones)
         all_buckets = []
+        bucket_delta = timedelta(minutes=bucket_minutes)
 
         # Compute the first bucket-aligned timestamp
         first_aligned_bucket = start_time.replace(second=0, microsecond=0)

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Settings as SettingsIcon, Database, Zap, Shield } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { API_BASE_URL, api } from "@/lib/api";
+import { api } from "@/lib/api";
 
 function useConnectionStatus() {
     const [isConnected, setIsConnected] = useState<boolean | null>(null);
@@ -14,14 +14,9 @@ function useConnectionStatus() {
         const checkConnection = async () => {
             try {
                 setLoading(true);
-                // Try to make a simple health check request
-                const response = await fetch(`${API_BASE_URL}/health`, {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/json',
-                    },
-                });
-                setIsConnected(response.ok);
+                // Use the existing api.healthCheck() helper for consistent request handling
+                const response = await api.healthCheck();
+                setIsConnected(response.status === 'healthy');
             } catch (error) {
                 console.error('Connection check failed:', error);
                 setIsConnected(false);
